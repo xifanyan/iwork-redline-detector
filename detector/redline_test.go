@@ -68,7 +68,7 @@ func TestDetectRedlines(t *testing.T) {
 				t.Fatalf("DetectRedlines(%s) returned error: %v", tt.name, err)
 			}
 
-			hasRedlines := result.HasTrackChanges && (result.InsertionCount > 0 || result.DeletionCount > 0)
+			hasRedlines := result.TrackChangesStatus == TCStatusEnabledWithChanges
 			if hasRedlines != tt.wantRedlines {
 				t.Errorf("DetectRedlines(%s) hasRedlines = %v, want %v", tt.name, hasRedlines, tt.wantRedlines)
 			}

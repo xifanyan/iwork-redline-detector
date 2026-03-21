@@ -83,7 +83,7 @@ func ReadArchiveInfo(data []byte) (*ArchiveInfo, error) {
 	r := bytes.NewReader(data)
 
 	for r.Len() > 0 {
-		fieldNum, err := readVarint(r)
+		fieldNum, err := ReadVarint(r)
 		if err != nil {
 			break
 		}
@@ -92,14 +92,14 @@ func ReadArchiveInfo(data []byte) (*ArchiveInfo, error) {
 
 		switch {
 		case fieldNum == 1 && wireType == 0:
-			val, err := readVarint(r)
+			val, err := ReadVarint(r)
 			if err != nil {
 				return nil, err
 			}
 			info.Identifier = val
 
 		case fieldNum == 2 && wireType == 2:
-			dataLen, err := readVarint(r)
+			dataLen, err := ReadVarint(r)
 			if err != nil {
 				return nil, err
 			}
@@ -117,7 +117,7 @@ func ReadArchiveInfo(data []byte) (*ArchiveInfo, error) {
 			}
 
 		default:
-			if err := skipWireType(r, wireType); err != nil {
+			if err := SkipWireType(r, wireType); err != nil {
 				return nil, err
 			}
 		}
@@ -131,7 +131,7 @@ func ParseMessageInfo(data []byte) (MessageInfo, error) {
 	r := bytes.NewReader(data)
 
 	for r.Len() > 0 {
-		fieldNum, err := readVarint(r)
+		fieldNum, err := ReadVarint(r)
 		if err != nil {
 			break
 		}
@@ -140,21 +140,21 @@ func ParseMessageInfo(data []byte) (MessageInfo, error) {
 
 		switch {
 		case fieldNum == 1 && wireType == 0:
-			val, err := readVarint(r)
+			val, err := ReadVarint(r)
 			if err != nil {
 				return info, err
 			}
 			info.Length = val
 
 		case fieldNum == 2 && wireType == 0:
-			val, err := readVarint(r)
+			val, err := ReadVarint(r)
 			if err != nil {
 				return info, err
 			}
 			info.Type = val
 
 		case fieldNum == 3 && wireType == 2:
-			dataLen, err := readVarint(r)
+			dataLen, err := ReadVarint(r)
 			if err != nil {
 				return info, err
 			}
@@ -167,7 +167,7 @@ func ParseMessageInfo(data []byte) (MessageInfo, error) {
 			}
 
 		default:
-			if err := skipWireType(r, wireType); err != nil {
+			if err := SkipWireType(r, wireType); err != nil {
 				return info, err
 			}
 		}
@@ -176,7 +176,7 @@ func ParseMessageInfo(data []byte) (MessageInfo, error) {
 	return info, nil
 }
 
-func readVarint(r *bytes.Reader) (uint64, error) {
+func ReadVarint(r *bytes.Reader) (uint64, error) {
 	var val uint64
 	var shift uint
 	for i := 0; i < 10; i++ {
@@ -193,7 +193,7 @@ func readVarint(r *bytes.Reader) (uint64, error) {
 	return val, fmt.Errorf("varint overflow")
 }
 
-func skipWireType(r *bytes.Reader, wireType uint64) error {
+func SkipWireType(r *bytes.Reader, wireType uint64) error {
 	switch wireType {
 	case 0:
 		_, err := r.ReadByte()
@@ -202,7 +202,7 @@ func skipWireType(r *bytes.Reader, wireType uint64) error {
 		r.Seek(4, io.SeekCurrent)
 		return nil
 	case 2:
-		len, err := readVarint(r)
+		len, err := ReadVarint(r)
 		if err != nil {
 			return err
 		}
@@ -222,7 +222,7 @@ func skipWireType(r *bytes.Reader, wireType uint64) error {
 func skipGroup(r *bytes.Reader, groupFieldNum uint64) error {
 	depth := 1
 	for depth > 0 && r.Len() > 0 {
-		tag, err := readVarint(r)
+		tag, err := ReadVarint(r)
 		if err != nil {
 			return err
 		}
@@ -234,7 +234,7 @@ func skipGroup(r *bytes.Reader, groupFieldNum uint64) error {
 		} else if wireType == 7 && fieldNum == groupFieldNum {
 			depth--
 		} else {
-			if err := skipWireType(r, wireType); err != nil {
+			if err := SkipWireType(r, wireType); err != nil {
 				return err
 			}
 		}
@@ -255,7 +255,7 @@ func ParseMessageData(data []byte) *ParsedMessage {
 	r := bytes.NewReader(data)
 
 	for r.Len() > 0 {
-		fieldNum, err := readVarint(r)
+		fieldNum, err := ReadVarint(r)
 		if err != nil {
 			break
 		}
@@ -264,10 +264,10 @@ func ParseMessageData(data []byte) *ParsedMessage {
 
 		switch wireType {
 		case 0:
-			val, _ := readVarint(r)
+			val, _ := ReadVarint(r)
 			msg.Fields[fieldNum] = encodeVarint(val)
 		case 2:
-			dataLen, _ := readVarint(r)
+			dataLen, _ := ReadVarint(r)
 			fieldData := make([]byte, dataLen)
 			r.Read(fieldData)
 			msg.Fields[fieldNum] = fieldData
@@ -276,7 +276,7 @@ func ParseMessageData(data []byte) *ParsedMessage {
 			r.Read(fieldData)
 			msg.Fields[fieldNum] = fieldData
 		default:
-			skipWireType(r, wireType)
+			SkipWireType(r, wireType)
 		}
 	}
 

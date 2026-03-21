@@ -2,6 +2,15 @@ package detector
 
 import "fmt"
 
+type TrackChangesStatus int
+
+const (
+	TCStatusUnknown TrackChangesStatus = iota
+	TCStatusDisabled
+	TCStatusEnabledNoChanges
+	TCStatusEnabledWithChanges
+)
+
 const (
 	TypeChangeCTVisibilityCommand  uint64 = 10148
 	TypeTrackChangesCommand        uint64 = 10149
@@ -21,6 +30,20 @@ const (
 	TypeSettingsArchive      uint64 = 1003
 	TypeChangeArchive        uint64 = 1004
 	TypeChangeSessionArchive uint64 = 1005
+)
+
+const (
+	FieldChangeTrackingEnabled = 40
+	FieldChangeTrackingPaused  = 45
+	FieldChangeKind            = 1
+	FieldChangeSession         = 2
+	FieldChangeDate            = 3
+	FieldChangeHidden          = 4
+)
+
+const (
+	ChangeKindInsertion = 1
+	ChangeKindDeletion  = 2
 )
 
 var TypeNames = map[uint64]string{
@@ -46,4 +69,17 @@ func GetTypeName(typeID uint64) string {
 		return name
 	}
 	return fmt.Sprintf("Unknown(%d)", typeID)
+}
+
+func (s TrackChangesStatus) String() string {
+	switch s {
+	case TCStatusDisabled:
+		return "Disabled"
+	case TCStatusEnabledNoChanges:
+		return "Enabled (No Changes)"
+	case TCStatusEnabledWithChanges:
+		return "Enabled (With Changes)"
+	default:
+		return "Unknown"
+	}
 }

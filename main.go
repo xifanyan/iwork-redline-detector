@@ -101,7 +101,7 @@ func main() {
 			continue
 		}
 
-		hasRedlines := r.detection.HasTrackChanges && (r.detection.InsertionCount > 0 || r.detection.DeletionCount > 0)
+		hasRedlines := r.detection.TrackChangesStatus == detector.TCStatusEnabledWithChanges
 
 		if hasRedlines {
 			redlinesFound++
