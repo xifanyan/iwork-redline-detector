@@ -53,9 +53,6 @@ func main() {
 	}
 
 	fmt.Printf("Processing %d file(s) with %d thread(s)...\n\n", len(pagesFiles), threads)
-	if *debugFlag {
-		fmt.Printf("DEBUG: Found %d files: %v\n", len(pagesFiles), pagesFiles)
-	}
 
 	type result struct {
 		file      string

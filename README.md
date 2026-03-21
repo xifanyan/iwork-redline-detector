@@ -27,6 +27,22 @@ This project was built based on detailed research of the iWork file format. See 
 
 ## How It Works
 
+### Supported Formats
+
+The tool automatically detects and handles two iWork file formats:
+
+#### Modern IWA Format (.pages)
+
+Modern `.pages` files use Apple's binary IWA (iWork Archive) format. Files are ZIP bundles containing `Index/Document.iwa` and other IWA payloads.
+
+#### Legacy iWork '09 XML Format (.pages)
+
+iWork '09 files use plain XML instead of IWA bundles. They contain a top-level `index.xml` (or `index.xml.gz`) entry in the ZIP archive rather than `Index/Document.iwa`.
+
+The tool detects the format automatically by inspecting ZIP entry names:
+- `Index/Document.iwa` → Modern IWA format
+- `index.xml` / `index.xml.gz` → Legacy XML format
+
 ### Detection Approach
 
 The detector uses a **multi-signal detection strategy** to accurately identify track changes status:
@@ -41,7 +57,17 @@ The detector decompresses the relevant `.iwa` payloads and reads the boolean set
 
 This lets the tool distinguish `Disabled`, `Paused`, and `Enabled (No Changes)` without relying only on insertion/deletion counts.
 
-#### 2. Change Detection (Heuristic)
+#### 2. Legacy XML Parsing (iWork '09)
+
+For iWork '09 files, the detector parses `index.xml` directly:
+
+- **`sl:change-tracking`**: reads `enabled` and `suspended` attributes for tracking state
+- **`sf:text-changes`**: reads aggregate `insertion-count` and `deletion-count` attributes when present
+- **`sf:changed` / `sf:change`**: counts individual change elements by `kind` attribute ("insertion" or "deletion")
+
+Priority: aggregate counts from `sf:text-changes` are used when available; otherwise individual change elements are counted. Malformed XML returns an error rather than silently producing incorrect results.
+
+#### 3. Change Detection (Heuristic)
 
 The detector also scans for actual tracked changes using byte-pattern detection:
 
@@ -52,7 +78,7 @@ Normal documents have ~20 insertion patterns from character styling, so we use t
 - **Insertions > 21** → actual track changes detected
 - **Deletions > 1** → actual track changes detected
 
-#### 3. Combined Status
+#### 4. Combined Status
 
 The detector combines both signals to determine the final status:
 
@@ -203,14 +229,15 @@ The detector combines **direct settings field reads** with **heuristic change co
 
 ```go
 type RedlineDetection struct {
+    Format                FormatType        // Detected file format: Modern or Legacy XML
     TrackChangesStatus    TrackChangesStatus // Disabled, Paused, EnabledNoChanges, EnabledWithChanges
-    SettingEnabled        bool               // From Document.iwa field 40
-    SettingPaused         bool               // From ViewState field 28
-    TrackedChangesPresent bool               // From heuristic change scan
+    SettingEnabled        bool               // From Document.iwa field 40 (modern) or sl:change-tracking (legacy)
+    SettingPaused         bool               // From ViewState field 28 (modern) or sl:suspended (legacy)
+    TrackedChangesPresent bool               // From heuristic scan (modern) or sf:changed elements (legacy)
     HighConfidence        bool               // True if settings fields were found
 
-    InsertionCount int                    // From heuristic scan
-    DeletionCount  int                    // From heuristic scan
+    InsertionCount int                    // From heuristic scan (modern) or XML parsing (legacy)
+    DeletionCount  int                    // From heuristic scan (modern) or XML parsing (legacy)
     HiddenChanges  int                    // Hidden changes count
 
     Changes []Change                     // Individual change records (future enhancement)
@@ -241,26 +268,28 @@ type RedlineDetection struct {
 
 ### Output Formats
 
-**Normal mode** (aligned table, 2 columns):
+**Normal mode** (aligned table, 3 columns):
 ```
-FILEPATH                        REDLINES  
-normal.track.accepted.pages     false     
-normal.pages                    false     
-blank.track.pages               false     
-track.not-accepted.pages        true      
-deletion.track-paused.pages     true      
-tracking.insert.deletion.pages  true      
+FILEPATH                        REDLINES  FORMAT  
+normal.track.accepted.pages     false     Modern  
+normal.pages                    false     Modern  
+blank.track.pages               false     Modern  
+track.not-accepted.pages        true      Modern  
+deletion.track-paused.pages     true      Modern  
+tracking.insert.deletion.pages  true      Modern  
 ```
 
 **Debug mode** (aligned table, all columns):
 ```
-FILEPATH                        REDLINES  INSERTIONS  DELETIONS  STATUS                  CONF  
-normal.pages                    false     20          1          Disabled                High  
-normal.track.accepted.pages     false     21          1          Enabled (No Changes)    High  
-blank.track.pages               false     20          1          Enabled (No Changes)    High  
-track.not-accepted.pages        true      22          1          Enabled (With Changes)  High  
-deletion.track-paused.pages     true      21          2          Paused (With Changes)   High  
-tracking.insert.deletion.pages   true      22          3          Enabled (With Changes)  High  
+FILEPATH                        REDLINES  INSERTIONS  DELETIONS  STATUS                  CONF  FORMAT  
+normal.pages                    false     20          1          Disabled                High  Modern  
+normal.track.accepted.pages     false     21          1          Enabled (No Changes)    High  Modern  
+blank.track.pages               false     20          1          Enabled (No Changes)    High  Modern  
+track.not-accepted.pages        true      22          1          Enabled (With Changes)  High  Modern  
+deletion.track-paused.pages     true      21          2          Paused                  High  Modern  
+tracking.insert.deletion.pages   true      22          3          Enabled (With Changes)  High  Modern  
+pages09/normal.pages            false     0           0          Disabled                High  Pages '09  
+pages09/deletion.track-paused.pages  true   0           1          Paused                  High  Pages '09  
 ```
 
 ### Detection Confidence
@@ -276,14 +305,27 @@ When settings fields cannot be found, the detector falls back to heuristic detec
 
 ## Test Results
 
-| File | Insertions | Deletions | Redlines | Status |
-|------|------------|-----------|----------|---------|
-| normal.pages | 20 | 1 | false | Disabled |
-| blank.track.pages | 20 | 1 | false | Enabled (No Changes) |
-| normal.track.accepted.pages | 21 | 1 | false | Enabled (No Changes) |
-| track.not-accepted.pages | 22 | 1 | true | Enabled (With Changes) |
-| deletion.track-paused.pages | 21 | 2 | true | Paused (With Changes) |
-| tracking.insert.deletion.pages | 22 | 3 | true | Enabled (With Changes) |
+### Modern Format (testdata/pages/)
+
+| File | Insertions | Deletions | Redlines | Status | Format |
+|------|------------|-----------|----------|---------|--------|
+| normal.pages | 20 | 1 | false | Disabled | Modern |
+| blank.track.pages | 20 | 1 | false | Enabled (No Changes) | Modern |
+| normal.track.accepted.pages | 21 | 1 | false | Enabled (No Changes) | Modern |
+| track.not-accepted.pages | 22 | 1 | true | Enabled (With Changes) | Modern |
+| deletion.track-paused.pages | 21 | 2 | true | Paused | Modern |
+| tracking.insert.deletion.pages | 22 | 3 | true | Enabled (With Changes) | Modern |
+
+### Legacy iWork '09 Format (testdata/pages09/)
+
+| File | Insertions | Deletions | Redlines | Status | Format |
+|------|------------|-----------|----------|---------|--------|
+| normal.pages | 0 | 0 | false | Disabled | Pages '09 |
+| blank.track.pages | 0 | 0 | false | Enabled (No Changes) | Pages '09 |
+| normal.track.accepted.pages | 0 | 0 | false | Enabled (No Changes) | Pages '09 |
+| track.not-accepted.pages | 1 | 0 | true | Enabled (With Changes) | Pages '09 |
+| deletion.track-paused.pages | 0 | 1 | true | Paused | Pages '09 |
+| tracking.insert.deletion.pages | 1 | 2 | true | Enabled (With Changes) | Pages '09 |
 
 ## Technical Notes
 
@@ -298,7 +340,8 @@ When settings fields cannot be found, the detector falls back to heuristic detec
 
 - **Keynote and Numbers**: Only support comments/annotations, **not** inline track changes
 - **ArchiveInfo parsing**: Full typed-message traversal in `iwa/parser.go` is still incomplete for some IWA structures, so detailed message extraction remains limited.
-- **Heuristic threshold**: Change presence still uses insertion/deletion thresholds and may produce false positives on documents with unusual styling density.
+- **Heuristic threshold**: Modern format change detection uses insertion/deletion byte-pattern thresholds and may produce false positives on documents with unusual styling density.
+- **Legacy XML**: Heuristic scanning is not applied to iWork '09 files; change counts come from XML parsing only.
 - **Change records**: Individual change author/timestamp parsing not yet fully implemented
 - **Legal-grade detection**: For highest confidence, compare against a known-clean baseline document
 
