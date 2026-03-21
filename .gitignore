@@ -5,3 +5,7 @@
 bin/
 *.exe
 *.test
+
+# Build artifacts
+*.zip
+iwork-redline-detector-*
