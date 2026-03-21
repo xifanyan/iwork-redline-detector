@@ -154,17 +154,16 @@ Normal documents already have ~20 of these patterns for regular text styling (no
 | `bin/iwork-redline-detector` | Compiled binary executable |
 
 **Project Structure:**
-```
-iwork-redline-detector/
-  ├── main.go
-  ├── iwa/
-  │   └── parser.go
-  ├── detector/
-  │   ├── types.go
-  │   └── redline.go
-  └── bin/
-      └── iwork-redline-detector
-```
+
+- `iwork-redline-detector/`
+  - `main.go`
+  - `iwa/`
+    - `parser.go`
+  - `detector/`
+    - `types.go`
+    - `redline.go`
+  - `bin/`
+    - `iwork-redline-detector`
 
 ### Detection Logic
 
