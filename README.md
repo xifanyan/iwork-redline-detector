@@ -241,25 +241,26 @@ type RedlineDetection struct {
 
 ### Output Formats
 
-**Normal mode** (tab-separated):
+**Normal mode** (aligned table, 2 columns):
 ```
-normal.pages	false
-normal.track.accepted.pages	false
-track.not-accepted.pages	true
-deletion.track-paused.pages	true
-tracking.insert.deletion.pages	true
+FILEPATH                        REDLINES  
+normal.track.accepted.pages     false     
+normal.pages                    false     
+blank.track.pages               false     
+track.not-accepted.pages        true      
+deletion.track-paused.pages     true      
+tracking.insert.deletion.pages  true      
 ```
 
-**Debug mode**:
+**Debug mode** (aligned table, all columns):
 ```
-FILEPATH                     | REDLINES | INSERTIONS | DELETIONS | STATUS                     | CONF
-----------------------------|-----------|------------|-----------|---------------------------|-----
-normal.pages                | false     | 20         | 1         | Disabled                  | High
-blank.track.pages           | false     | 20         | 1         | Enabled (No Changes)      | High
-normal.track.accepted.pages| false     | 21         | 1         | Enabled (No Changes)      | High
-track.not-accepted.pages   | true      | 22         | 1         | Enabled (With Changes)    | High
-deletion.track-paused.pages| true      | 21         | 2         | Paused (With Changes)     | High
-tracking.insert.deletion.pages| true     | 22         | 3         | Enabled (With Changes)    | High
+FILEPATH                        REDLINES  INSERTIONS  DELETIONS  STATUS                  CONF  
+normal.pages                    false     20          1          Disabled                High  
+normal.track.accepted.pages     false     21          1          Enabled (No Changes)    High  
+blank.track.pages               false     20          1          Enabled (No Changes)    High  
+track.not-accepted.pages        true      22          1          Enabled (With Changes)  High  
+deletion.track-paused.pages     true      21          2          Paused (With Changes)   High  
+tracking.insert.deletion.pages   true      22          3          Enabled (With Changes)  High  
 ```
 
 ### Detection Confidence
