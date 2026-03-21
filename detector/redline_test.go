@@ -81,6 +81,18 @@ func TestDetectRedlines(t *testing.T) {
 			maxInsertions:      22,
 			wantDeletions:      2,
 		},
+		{
+			name:               "tracking enabled with both insertions and deletions",
+			filename:           "tracking.insert.deletion.pages",
+			wantStatus:         TCStatusEnabledWithChanges,
+			wantEnabled:        true,
+			wantPaused:         false,
+			wantTrackedChanges: true,
+			wantConfidence:     true,
+			minInsertions:      21,
+			maxInsertions:      23,
+			wantDeletions:      3,
+		},
 	}
 
 	for _, tt := range tests {

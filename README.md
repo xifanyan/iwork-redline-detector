@@ -247,6 +247,7 @@ normal.pages	false
 normal.track.accepted.pages	false
 track.not-accepted.pages	true
 deletion.track-paused.pages	true
+tracking.insert.deletion.pages	true
 ```
 
 **Debug mode**:
@@ -258,6 +259,7 @@ blank.track.pages           | false     | 20         | 1         | Enabled (No C
 normal.track.accepted.pages| false     | 21         | 1         | Enabled (No Changes)      | High
 track.not-accepted.pages   | true      | 22         | 1         | Enabled (With Changes)    | High
 deletion.track-paused.pages| true      | 21         | 2         | Paused (With Changes)     | High
+tracking.insert.deletion.pages| true     | 22         | 3         | Enabled (With Changes)    | High
 ```
 
 ### Detection Confidence
@@ -280,6 +282,7 @@ When settings fields cannot be found, the detector falls back to heuristic detec
 | normal.track.accepted.pages | 21 | 1 | false | Enabled (No Changes) |
 | track.not-accepted.pages | 22 | 1 | true | Enabled (With Changes) |
 | deletion.track-paused.pages | 21 | 2 | true | Paused (With Changes) |
+| tracking.insert.deletion.pages | 22 | 3 | true | Enabled (With Changes) |
 
 ## Technical Notes
 
