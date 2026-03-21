@@ -3,6 +3,8 @@ package detector
 import (
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"strings"
@@ -64,6 +66,12 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 			FormatChangesVisible: true,
 			AnnotationsVisible:   true,
 		},
+	}
+
+	format := DetectFormat(pagesPath)
+
+	if format == FormatLegacyXML {
+		return detectRedlinesLegacyXML(pagesPath, result)
 	}
 
 	docData, err := extractDocumentIWA(pagesPath)
@@ -335,6 +343,152 @@ func contains(data, pattern []byte) bool {
 			}
 		}
 		if found {
+			return true
+		}
+	}
+	return false
+}
+
+func detectRedlinesLegacyXML(pagesPath string, result *RedlineDetection) (*RedlineDetection, error) {
+	r, err := zip.OpenReader(pagesPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open pages file: %w", err)
+	}
+	defer r.Close()
+
+	var indexData []byte
+	for _, entry := range r.File {
+		if entry.Name == "index.xml" {
+			indexData, err = readZipEntry(entry)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read index.xml: %w", err)
+			}
+			break
+		}
+		if entry.Name == "index.xml.gz" {
+			indexData, err = readZipEntry(entry)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read index.xml.gz: %w", err)
+			}
+			indexData, err = decompressGzip(indexData)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decompress index.xml.gz: %w", err)
+			}
+			break
+		}
+	}
+
+	if indexData == nil {
+		return nil, fmt.Errorf("no index.xml or index.xml.gz found in archive")
+	}
+
+	insertionCount, deletionCount, trackingEnabled, trackingPaused, highConfidence := parseLegacyIndexXML(indexData)
+
+	result.InsertionCount = insertionCount
+	result.DeletionCount = deletionCount
+	result.SettingEnabled = trackingEnabled
+	result.SettingPaused = trackingPaused
+	result.HighConfidence = highConfidence
+	result.TrackedChangesPresent = insertionCount > 0 || deletionCount > 0
+
+	if highConfidence {
+		switch {
+		case trackingPaused:
+			result.TrackChangesStatus = TCStatusPaused
+		case trackingEnabled && result.TrackedChangesPresent:
+			result.TrackChangesStatus = TCStatusEnabledWithChanges
+		case trackingEnabled:
+			result.TrackChangesStatus = TCStatusEnabledNoChanges
+		default:
+			result.TrackChangesStatus = TCStatusDisabled
+		}
+	} else if result.TrackedChangesPresent {
+		result.TrackChangesStatus = TCStatusEnabledWithChanges
+	} else {
+		result.TrackChangesStatus = TCStatusDisabled
+	}
+
+	return result, nil
+}
+
+func readZipEntry(entry *zip.File) ([]byte, error) {
+	rc, err := entry.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return io.ReadAll(rc)
+}
+
+func decompressGzip(data []byte) ([]byte, error) {
+	r, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return io.ReadAll(r)
+}
+
+func parseLegacyIndexXML(data []byte) (insertions, deletions int, enabled, paused, highConfidence bool) {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			break
+		}
+
+		switch se := token.(type) {
+		case xml.StartElement:
+			if localName(se, "change-tracking") {
+				for _, attr := range se.Attr {
+					if attr.Name.Local == "enabled" {
+						enabled = attr.Value == "true"
+						highConfidence = true
+					}
+					if attr.Name.Local == "suspended" {
+						paused = attr.Value == "true"
+					}
+				}
+			}
+			if localName(se, "text-changes") {
+				for _, attr := range se.Attr {
+					if attr.Name.Local == "sf:insertion-count" || attr.Name.Local == "insertion-count" {
+						var count int
+						fmt.Sscanf(attr.Value, "%d", &count)
+						insertions = count
+					}
+					if attr.Name.Local == "sf:deletion-count" || attr.Name.Local == "deletion-count" {
+						var count int
+						fmt.Sscanf(attr.Value, "%d", &count)
+						deletions = count
+					}
+				}
+			}
+			if localNameAny(se, "change", "changed", "sf:change", "sf:changed") {
+				kind := ""
+				for _, attr := range se.Attr {
+					if attr.Name.Local == "kind" || attr.Name.Local == "sf:kind" {
+						kind = attr.Value
+					}
+				}
+				if kind == "insertion" {
+					insertions++
+				} else if kind == "deletion" {
+					deletions++
+				}
+			}
+		}
+	}
+	return
+}
+
+func localName(se xml.StartElement, name string) bool {
+	return se.Name.Local == name
+}
+
+func localNameAny(se xml.StartElement, names ...string) bool {
+	for _, name := range names {
+		if se.Name.Local == name {
 			return true
 		}
 	}

@@ -1,8 +1,12 @@
 package detector
 
-import "fmt"
+import (
+	"archive/zip"
+	"fmt"
+)
 
 type TrackChangesStatus int
+type FormatType int
 
 const (
 	TCStatusUnknown TrackChangesStatus = iota
@@ -10,6 +14,12 @@ const (
 	TCStatusPaused
 	TCStatusEnabledNoChanges
 	TCStatusEnabledWithChanges
+)
+
+const (
+	FormatUnknown FormatType = iota
+	FormatModernIWA
+	FormatLegacyXML
 )
 
 const (
@@ -85,4 +95,23 @@ func (s TrackChangesStatus) String() string {
 	default:
 		return "Unknown"
 	}
+}
+
+func DetectFormat(pagesPath string) FormatType {
+	r, err := zip.OpenReader(pagesPath)
+	if err != nil {
+		return FormatUnknown
+	}
+	defer r.Close()
+
+	for _, entry := range r.File {
+		if entry.Name == "Index/Document.iwa" {
+			return FormatModernIWA
+		}
+		if entry.Name == "index.xml" || entry.Name == "index.xml.gz" {
+			return FormatLegacyXML
+		}
+	}
+
+	return FormatUnknown
 }

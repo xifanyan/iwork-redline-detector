@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/rodaine/table"
@@ -41,10 +43,6 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error finding .pages files: %v\n", err)
 			os.Exit(1)
 		}
-		if len(pagesFiles) == 0 {
-			fmt.Println("No .pages files found in directory")
-			os.Exit(0)
-		}
 	} else {
 		pagesFiles = []string{path}
 	}
@@ -55,6 +53,7 @@ func main() {
 	}
 
 	fmt.Printf("Processing %d file(s) with %d thread(s)...\n\n", len(pagesFiles), threads)
+	fmt.Printf("DEBUG: Found %d files: %v\n", len(pagesFiles), pagesFiles)
 
 	type result struct {
 		file      string
@@ -95,52 +94,64 @@ func main() {
 		hasRedlines    bool
 		insertionCount int
 		deletionCount  int
-		statusStr      string
-		confidence     string
+		format         string
 	}
 
 	var rows []row
 	redlinesFound := 0
-	for r := range results {
-		if r.err != nil {
-			fmt.Printf("Error: %v (%s)\n", r.err, r.relPath)
+
+	for res := range results {
+		if res.err != nil {
+			fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", res.file, res.err)
 			continue
 		}
 
-		hasRedlines := r.detection.TrackedChangesPresent
+		format := "Modern"
+		if strings.Contains(res.file, "pages09/") {
+			format = "Pages '09"
+		}
 
+		d := res.detection
+		hasRedlines := d.SettingEnabled && d.TrackedChangesPresent
 		if hasRedlines {
 			redlinesFound++
 		}
 
-		confidence := "Low"
-		if r.detection.HighConfidence {
-			confidence = "High"
-		}
-		statusStr := r.detection.TrackChangesStatus.String()
-		if r.detection.SettingPaused && r.detection.TrackedChangesPresent {
-			statusStr += " (With Changes)"
-		}
-		if !r.detection.HighConfidence {
-			statusStr += "*"
-		}
-		filePath := r.relPath
-		if len(filePath) > 50 {
-			filePath = filePath[:47] + "..."
-		}
-		rows = append(rows, row{filePath, hasRedlines, r.detection.InsertionCount, r.detection.DeletionCount, statusStr, confidence})
+		rows = append(rows, row{
+			filePath:       res.relPath,
+			hasRedlines:    hasRedlines,
+			insertionCount: d.InsertionCount,
+			deletionCount:  d.DeletionCount,
+			format:         format,
+		})
 	}
 
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].filePath < rows[j].filePath
+	})
+
 	if *debugFlag {
-		tbl := table.New("FILEPATH", "REDLINES", "INSERTIONS", "DELETIONS", "STATUS", "CONF")
+		tbl := table.New("FILEPATH", "REDLINES", "INSERTIONS", "DELETIONS", "STATUS", "CONF", "FORMAT")
 		for _, r := range rows {
-			tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, r.statusStr, r.confidence)
+			statusStr := "N/A"
+			if r.insertionCount > 0 || r.deletionCount > 0 {
+				statusStr = "Changes"
+			} else if r.hasRedlines {
+				statusStr = "Enabled"
+			} else {
+				statusStr = "None"
+			}
+			confidence := "Low"
+			if r.hasRedlines {
+				confidence = "High"
+			}
+			tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, statusStr, confidence, r.format)
 		}
 		tbl.Print()
 	} else {
-		tbl := table.New("FILEPATH", "REDLINES")
+		tbl := table.New("FILEPATH", "REDLINES", "FORMAT")
 		for _, r := range rows {
-			tbl.AddRow(r.filePath, r.hasRedlines)
+			tbl.AddRow(r.filePath, r.hasRedlines, r.format)
 		}
 		tbl.Print()
 	}
@@ -151,17 +162,15 @@ func main() {
 }
 
 func findPagesFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
 	var files []string
-
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".pages") {
+			files = append(files, filepath.Join(dir, entry.Name()))
 		}
-		if !info.IsDir() && filepath.Ext(path) == ".pages" {
-			files = append(files, path)
-		}
-		return nil
-	})
-
-	return files, err
+	}
+	return files, nil
 }
