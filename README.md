@@ -11,7 +11,7 @@ status: completed
 
 # iWork Redline Detector
 
-Go-based tool to detect track changes and redlines in Apple iWork documents (.pages files). Uses protobuf-based detection with heuristic fallback to reliably identify:
+Go-based tool to detect track changes and redlines in Apple iWork documents (.pages files). Uses direct protobuf field scanning plus change heuristics to identify:
 - Track Changes feature enabled/disabled status
 - Tracked insertions and deletions
 - Track Changes paused state
@@ -31,14 +31,15 @@ This project was built based on detailed research of the iWork file format. See 
 
 The detector uses a **multi-signal detection strategy** to accurately identify track changes status:
 
-#### 1. Protobuf-Based Detection (High Confidence)
+#### 1. Settings Detection (High Confidence)
 
-When `Document.iwa` can be successfully parsed, the detector directly reads document settings:
+The detector decompresses the relevant `.iwa` payloads and reads the boolean settings fields directly:
 
-- **`TP.DocumentArchive` (type 1002)**: Check field 40 (`change_tracking_enabled`) and field 45 (`change_tracking_paused`)
-- **`TP.SettingsArchive` (type 1003)**: Read markup visibility settings
+- **`Document.iwa`**: field 40 indicates whether Track Changes is enabled
+- **`ViewState*.iwa`**: field 28 indicates whether tracking is currently paused
+- **`TP.SettingsArchive` (when parsed)**: provides markup visibility settings
 
-This provides **definitive** information about whether Track Changes is enabled, independent of content.
+This lets the tool distinguish `Disabled`, `Paused`, and `Enabled (No Changes)` without relying only on insertion/deletion counts.
 
 #### 2. Change Detection (Heuristic)
 
@@ -55,12 +56,13 @@ Normal documents have ~20 insertion patterns from character styling, so we use t
 
 The detector combines both signals to determine the final status:
 
-| Setting Enabled | Changes Detected | Status |
-|---|---|---|
-| No | No | `Disabled` |
-| Yes | Yes | `Enabled (With Changes)` |
-| Yes | No | `Enabled (No Changes)` |
-| Unknown (protobuf failed) | Yes | `Enabled (With Changes)` - fallback |
+| Enabled | Paused | Changes Detected | Status |
+|---|---|---|---|
+| No | No | No | `Disabled` |
+| Yes | No | No | `Enabled (No Changes)` |
+| Yes | No | Yes | `Enabled (With Changes)` |
+| Yes | Yes | Yes/No | `Paused` |
+| Unknown | Unknown | Yes | `Enabled (With Changes)` - fallback |
 
 ### Step-by-Step Process
 
@@ -85,9 +87,9 @@ The `Document.iwa` file contains:
   - `TSWP.TextStorageArchive` (type 1001) - actual text content
 
 **3. Read Track Changes Setting**
-Parse `TP.DocumentArchive` to find:
-- **Field 40**: `change_tracking_enabled` (boolean)
-- **Field 45**: `change_tracking_paused` (boolean)
+Read the decompressed settings signals:
+- **Document field 40**: Track Changes enabled
+- **ViewState field 28**: Track Changes paused
 
 **4. Count Changes**
 Scan decompressed data for ChangeArchive patterns:
@@ -95,11 +97,7 @@ Scan decompressed data for ChangeArchive patterns:
 - **Kind 2**: Deletions (strikethrough text)
 
 **5. Determine Status**
-Combine settings and counts to produce final result.
-DocumentName.pages/
-└── Index/
-    └── Document.iwa  ← This contains all the text and track changes
-```
+Combine settings and counts to produce the final result.
 
 **2. Compression**
 The `Document.iwa` file is compressed using Google's Snappy algorithm. We decompress it to read the raw data.
@@ -167,15 +165,15 @@ Normal documents already have ~20 of these patterns for regular text styling (no
 
 ### Detection Logic
 
-The detector combines **protobuf-based settings parsing** with **heuristic change counting**:
+The detector combines **direct settings field reads** with **heuristic change counting**:
 
-**Primary Signal (Protobuf):**
+**Primary Signal (Settings Fields):**
 ```go
-1. Parse Document.iwa as IWA format
-2. Find TP.DocumentArchive (type 1002)
-3. Read field 40 (change_tracking_enabled)
-4. Read field 45 (change_tracking_paused)
-5. Result: Definitive Track Changes status
+1. Decompress Document.iwa
+2. Read field 40 (change_tracking_enabled)
+3. Decompress ViewState*.iwa
+4. Read field 28 (paused state)
+5. Result: Definitive current Track Changes mode
 ```
 
 **Secondary Signal (Heuristic):**
@@ -190,13 +188,14 @@ The detector combines **protobuf-based settings parsing** with **heuristic chang
 ```
 
 **Combination Logic:**
-- If protobuf parses successfully → use as primary source of truth
-- If protobuf fails → fall back to heuristic detection
-- Set `HighConfidence` flag when protobuf data is available
+- If settings fields are found → use them as the primary source of truth
+- If settings fields are unavailable → fall back to heuristic change detection
+- Set `HighConfidence` when the current mode comes from document/view-state settings
 
 **Track Changes Status Values:**
 
 - **`Disabled`**: Track Changes feature is turned off. No tracked changes will be recorded.
+- **`Paused`**: Track Changes was enabled for the document, but recording is currently paused.
 - **`Enabled (No Changes)`**: Track Changes is turned on, but no insertions/deletions have been made yet.
 - **`Enabled (With Changes)`**: Track Changes is on and actual tracked changes (insertions/deletions) are present in the document.
 
@@ -204,14 +203,15 @@ The detector combines **protobuf-based settings parsing** with **heuristic chang
 
 ```go
 type RedlineDetection struct {
-    TrackChangesStatus   TrackChangesStatus  // Disabled, EnabledNoChanges, EnabledWithChanges
-    SettingEnabled       bool                // From DocumentArchive field 40
-    SettingPaused        bool                // From DocumentArchive field 45
-    HighConfidence       bool                // True if protobuf parsing succeeded
+    TrackChangesStatus    TrackChangesStatus // Disabled, Paused, EnabledNoChanges, EnabledWithChanges
+    SettingEnabled        bool               // From Document.iwa field 40
+    SettingPaused         bool               // From ViewState field 28
+    TrackedChangesPresent bool               // From heuristic change scan
+    HighConfidence        bool               // True if settings fields were found
 
-    InsertionCount int                   // From heuristic scan
-    DeletionCount  int                   // From heuristic scan
-    HiddenChanges  int                   // Hidden changes count
+    InsertionCount int                    // From heuristic scan
+    DeletionCount  int                    // From heuristic scan
+    HiddenChanges  int                    // Hidden changes count
 
     Changes []Change                     // Individual change records (future enhancement)
 
@@ -249,9 +249,11 @@ pages.track.pages	true
 
 **Debug mode**:
 ```
-FILEPATH                     | REDLINES | INSERTIONS | DELETIONS
-pages.normal.pages          | false     | 20         | 1
-pages.track.pages           | true      | 22         | 1
+FILEPATH                     | REDLINES | INSERTIONS | DELETIONS | STATUS                     | CONF
+pages.normal.pages          | false     | 20         | 1         | Disabled                  | High
+pages.blank.track.pages     | false     | 20         | 1         | Enabled (No Changes)      | High
+pages.track.pages           | true      | 22         | 1         | Enabled (With Changes)    | High
+pages.notracking.deletion.pages | true  | 21         | 2         | Paused (With Changes)     | High
 ```
 
 ### Detection Confidence
@@ -260,23 +262,19 @@ The detector provides different levels of confidence based on data availability:
 
 | Confidence Level | Source | Interpretation |
 |---|---|---|
-| **High** | Protobuf parsed successfully | Track Changes status is definitive (direct from document settings) |
+| **High** | Settings fields found | Track Changes mode is read directly from document/view-state data |
 | **Low** | Heuristic only | Status based on byte-pattern counting, may have false positives |
 
-When protobuf parsing fails, the detector falls back to heuristic detection but sets confidence to low.
+When settings fields cannot be found, the detector falls back to heuristic detection and marks confidence as low.
 
 ## Test Results
-
-> **Note:** All tests show "Low" confidence because protobuf parsing is not working correctly. The status values are based on heuristic detection.
 
 | File | Insertions | Deletions | Redlines | Status |
 |------|------------|-----------|----------|---------|
 | pages.normal.pages | 20 | 1 | false | Disabled |
 | pages.track.pages | 22 | 1 | true | Enabled (With Changes) |
-| pages.blank.track.pages | 20 | 1 | false | Disabled* |
-| pages.notracking.deletion.pages | 21 | 2 | true | Enabled (With Changes)* |
-
-*Status with asterisk indicates heuristic-based detection (not from document settings)
+| pages.blank.track.pages | 20 | 1 | false | Enabled (No Changes) |
+| pages.notracking.deletion.pages | 21 | 2 | true | Paused (With Changes) |
 
 ## Technical Notes
 
@@ -290,8 +288,8 @@ When protobuf parsing fails, the detector falls back to heuristic detection but 
 ## Limitations
 
 - **Keynote and Numbers**: Only support comments/annotations, **not** inline track changes
-- **Protobuf parsing**: The IWA protobuf structure differs from assumptions; DocumentArchive type ID (1002) is not being found in current implementation. Status is based on heuristic detection only.
-- **Heuristic threshold**: May have false positives on documents with many character styles - cannot distinguish "TC enabled with no changes" from "TC disabled" when insertion count ≈ 20
+- **ArchiveInfo parsing**: Full typed-message traversal in `iwa/parser.go` is still incomplete for some IWA structures, so detailed message extraction remains limited.
+- **Heuristic threshold**: Change presence still uses insertion/deletion thresholds and may produce false positives on documents with unusual styling density.
 - **Change records**: Individual change author/timestamp parsing not yet fully implemented
 - **Legal-grade detection**: For highest confidence, compare against a known-clean baseline document
 

@@ -101,7 +101,7 @@ func main() {
 			continue
 		}
 
-		hasRedlines := r.detection.TrackChangesStatus == detector.TCStatusEnabledWithChanges
+		hasRedlines := r.detection.TrackedChangesPresent
 
 		if hasRedlines {
 			redlinesFound++
@@ -113,6 +113,9 @@ func main() {
 				confidence = "High"
 			}
 			statusStr := r.detection.TrackChangesStatus.String()
+			if r.detection.SettingPaused && r.detection.TrackedChangesPresent {
+				statusStr += " (With Changes)"
+			}
 			if !r.detection.HighConfidence {
 				statusStr += "*"
 			}

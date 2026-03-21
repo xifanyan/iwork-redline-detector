@@ -1,11 +1,12 @@
 package detector
 
 import (
+	"archive/zip"
+	"bytes"
 	"fmt"
 	"io"
+	"strings"
 	"time"
-
-	"archive/zip"
 
 	"github.com/golang/snappy"
 	"github.com/user/iwork-redline-detector/iwa"
@@ -20,10 +21,11 @@ type Change struct {
 }
 
 type RedlineDetection struct {
-	TrackChangesStatus TrackChangesStatus
-	SettingEnabled     bool
-	SettingPaused      bool
-	HighConfidence     bool
+	TrackChangesStatus    TrackChangesStatus
+	SettingEnabled        bool
+	SettingPaused         bool
+	TrackedChangesPresent bool
+	HighConfidence        bool
 
 	InsertionCount int
 	DeletionCount  int
@@ -73,55 +75,49 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 		return nil, fmt.Errorf("Document.iwa too short: %d bytes", len(docData))
 	}
 
-	iwaFile, err := iwa.ParseIWAFile(docData)
-	protobufParsed := (err == nil)
-
-	if protobufParsed {
-		if docMsgs, ok := iwaFile.Messages[TypeDocumentArchive]; ok && len(docMsgs) > 0 {
-			result.HighConfidence = true
-			parseDocumentArchive(docMsgs[0], result)
-		}
-	}
-
-	decompressed, err := snappy.Decode(nil, docData[4:])
+	decompressed, err := iwa.DecompressSnappy(docData)
 	if err != nil {
-		if !protobufParsed {
-			return nil, fmt.Errorf("failed to decompress Document.iwa: %w", err)
-		}
-		insertions, deletions := 0, 0
-		result.InsertionCount = insertions
-		result.DeletionCount = deletions
+		return nil, fmt.Errorf("failed to decompress Document.iwa: %w", err)
+	}
 
-		if result.HighConfidence {
-			if result.SettingEnabled {
-				result.TrackChangesStatus = TCStatusEnabledNoChanges
-			} else {
-				result.TrackChangesStatus = TCStatusDisabled
-			}
-		}
-	} else {
-		hasTrackChanges, insertions, deletions := detectTrackChangesHeuristic(decompressed)
-		result.InsertionCount = insertions
-		result.DeletionCount = deletions
+	hasTrackChanges, insertions, deletions := detectTrackChangesHeuristic(decompressed)
+	result.InsertionCount = insertions
+	result.DeletionCount = deletions
+	result.TrackedChangesPresent = hasTrackChanges
 
-		if result.HighConfidence {
-			if result.SettingEnabled && (insertions > 21 || deletions > 1) {
-				result.TrackChangesStatus = TCStatusEnabledWithChanges
-			} else if result.SettingEnabled {
-				result.TrackChangesStatus = TCStatusEnabledNoChanges
-			} else {
-				result.TrackChangesStatus = TCStatusDisabled
-			}
-		} else {
-			if hasTrackChanges {
-				result.TrackChangesStatus = TCStatusEnabledWithChanges
-				result.SettingEnabled = true
-			} else {
-				result.TrackChangesStatus = TCStatusDisabled
+	if enabled, ok := detectBooleanFieldValue(decompressed, FieldChangeTrackingEnabled); ok {
+		result.SettingEnabled = enabled
+		result.HighConfidence = true
+	}
+
+	if viewStateData, err := extractViewStateIWA(pagesPath); err == nil {
+		if viewStateDecompressed, err := iwa.DecompressSnappy(viewStateData); err == nil {
+			if paused, ok := detectBooleanFieldValue(viewStateDecompressed, 28); ok {
+				result.SettingPaused = paused
+				result.HighConfidence = true
 			}
 		}
 	}
 
+	if result.HighConfidence {
+		switch {
+		case result.SettingPaused:
+			result.TrackChangesStatus = TCStatusPaused
+		case result.SettingEnabled && result.TrackedChangesPresent:
+			result.TrackChangesStatus = TCStatusEnabledWithChanges
+		case result.SettingEnabled:
+			result.TrackChangesStatus = TCStatusEnabledNoChanges
+		default:
+			result.TrackChangesStatus = TCStatusDisabled
+		}
+	} else if result.TrackedChangesPresent {
+		result.TrackChangesStatus = TCStatusEnabledWithChanges
+	} else {
+		result.TrackChangesStatus = TCStatusDisabled
+	}
+
+	iwaFile, err := iwa.ParseIWAFile(docData)
+	protobufParsed := err == nil
 	if protobufParsed {
 		if settingsMsgs, ok := iwaFile.Messages[TypeSettingsArchive]; ok && len(settingsMsgs) > 0 {
 			parseMarkupSettings(settingsMsgs[0], &result.MarkupSettings)
@@ -146,6 +142,35 @@ func parseDocumentArchive(data []byte, result *RedlineDetection) {
 	if val, ok := msg.Fields[FieldChangeTrackingPaused]; ok && len(val) > 0 {
 		result.SettingPaused = decodeBool(val)
 	}
+}
+
+func detectBooleanFieldValue(data []byte, fieldNum uint64) (bool, bool) {
+	tag := encodeVarint(fieldNum << 3)
+	for offset := 0; offset < len(data); {
+		idx := bytes.Index(data[offset:], tag)
+		if idx < 0 {
+			break
+		}
+		idx += offset
+		if idx+len(tag) >= len(data) {
+			return false, false
+		}
+		value := data[idx+len(tag)]
+		if value == 0 || value == 1 {
+			return value == 1, true
+		}
+		offset = idx + 1
+	}
+	return false, false
+}
+
+func encodeVarint(val uint64) []byte {
+	buf := make([]byte, 0, 10)
+	for val >= 0x80 {
+		buf = append(buf, byte(val)|0x80)
+		val >>= 7
+	}
+	return append(buf, byte(val))
 }
 
 func parseMarkupSettings(data []byte, settings *MarkupSettings) {
@@ -217,6 +242,14 @@ func extractDocumentIWA(pagesPath string) ([]byte, error) {
 }
 
 func extractAnnotationStorageIWA(pagesPath string) ([]byte, error) {
+	return extractIndexIWAByPrefix(pagesPath, "AnnotationAuthorStorage")
+}
+
+func extractViewStateIWA(pagesPath string) ([]byte, error) {
+	return extractIndexIWAByPrefix(pagesPath, "ViewState")
+}
+
+func extractIndexIWAByPrefix(pagesPath string, prefix string) ([]byte, error) {
 	r, err := zip.OpenReader(pagesPath)
 	if err != nil {
 		return nil, err
@@ -224,7 +257,8 @@ func extractAnnotationStorageIWA(pagesPath string) ([]byte, error) {
 	defer r.Close()
 
 	for _, f := range r.File {
-		if f.Name == "Index/AnnotationAuthorStorage.iwa" {
+		name := strings.TrimPrefix(f.Name, "Index/")
+		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, ".iwa") {
 			rc, err := f.Open()
 			if err != nil {
 				return nil, err
@@ -234,7 +268,7 @@ func extractAnnotationStorageIWA(pagesPath string) ([]byte, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("AnnotationAuthorStorage.iwa not found")
+	return nil, fmt.Errorf("%s.iwa not found", prefix)
 }
 
 func detectTrackChangesHeuristic(data []byte) (hasTrackChanges bool, insertions, deletions int) {
@@ -308,5 +342,5 @@ func contains(data, pattern []byte) bool {
 }
 
 func (r *RedlineDetection) HasTrackedChanges() bool {
-	return r.TrackChangesStatus == TCStatusEnabledWithChanges
+	return r.TrackedChangesPresent
 }

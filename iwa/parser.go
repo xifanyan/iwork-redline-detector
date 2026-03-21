@@ -111,7 +111,7 @@ func ReadArchiveInfo(data []byte) (*ArchiveInfo, error) {
 				info.MessageInfos = append(info.MessageInfos, mi)
 			}
 
-		case wireType == 6:
+		case wireType == 3:
 			if err := skipGroup(r, fieldNum); err != nil {
 				return nil, err
 			}
@@ -161,7 +161,7 @@ func ParseMessageInfo(data []byte) (MessageInfo, error) {
 			info.ArchiveData = make([]byte, dataLen)
 			r.Read(info.ArchiveData)
 
-		case wireType == 6:
+		case wireType == 3:
 			if err := skipGroup(r, fieldNum); err != nil {
 				return info, err
 			}
@@ -196,30 +196,31 @@ func ReadVarint(r *bytes.Reader) (uint64, error) {
 func SkipWireType(r *bytes.Reader, wireType uint64) error {
 	switch wireType {
 	case 0:
-		_, err := r.ReadByte()
+		_, err := ReadVarint(r)
 		return err
 	case 1:
-		r.Seek(4, io.SeekCurrent)
+		r.Seek(8, io.SeekCurrent)
 		return nil
 	case 2:
 		len, err := ReadVarint(r)
 		if err != nil {
 			return err
 		}
+		if len > uint64(r.Len()) {
+			return fmt.Errorf("skip wiretype 2: length %d exceeds remaining %d", len, r.Len())
+		}
 		r.Seek(int64(len), io.SeekCurrent)
 		return nil
 	case 5:
 		r.Seek(4, io.SeekCurrent)
 		return nil
-	case 3:
-		return nil
-	case 6, 7:
-		return nil
+	case 3, 4:
+		return skipGroup(r, wireType)
 	}
 	return nil
 }
 
-func skipGroup(r *bytes.Reader, groupFieldNum uint64) error {
+func skipGroup(r *bytes.Reader, groupEndTag uint64) error {
 	depth := 1
 	for depth > 0 && r.Len() > 0 {
 		tag, err := ReadVarint(r)
@@ -227,12 +228,14 @@ func skipGroup(r *bytes.Reader, groupFieldNum uint64) error {
 			return err
 		}
 		wireType := tag & 7
-		fieldNum := tag >> 3
 
-		if wireType == 6 && fieldNum == groupFieldNum {
+		if wireType == 3 {
 			depth++
-		} else if wireType == 7 && fieldNum == groupFieldNum {
+		} else if wireType == 4 {
 			depth--
+			if depth == 0 {
+				return nil
+			}
 		} else {
 			if err := SkipWireType(r, wireType); err != nil {
 				return err

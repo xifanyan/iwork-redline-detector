@@ -300,7 +300,7 @@ message AnnotationAuthorStorageArchive {
 
 ### 4.8 Heuristic Detection (Fallback)
 
-When protobuf parsing fails or is unavailable, the detector uses **byte-pattern scanning** as a fallback method.
+When detailed protobuf message extraction fails or is unavailable, the detector uses **byte-pattern scanning** as a fallback method for tracked-change presence.
 
 #### Why Heuristic Detection?
 
@@ -336,7 +336,7 @@ The detector reports confidence based on detection method:
 
 | Confidence | Method | Source |
 |---|---|---|
-| **High** | Protobuf-based | Direct reading of `TP.DocumentArchive` field 40 |
+| **High** | Direct field scan | Reading settings fields from decompressed `Document.iwa` / `ViewState*.iwa` |
 | **Low** | Heuristic | Byte-pattern counting, may have false positives |
 
 #### Limitations of Heuristic Detection
@@ -344,31 +344,29 @@ The detector reports confidence based on detection method:
 - **False Positives**: Documents with many character styles may exceed thresholds
 - **No Author Info**: Byte patterns don't reveal who made changes
 - **No Timestamps**: Cannot determine when changes were made
-- **Cannot Distinguish States**: Can't differentiate between "TC enabled but no changes" vs "TC disabled"
+- **Mode Detection Depends on Known Fields**: If field locations change in future Pages versions, high-confidence status may regress to heuristic mode
 
 ---
 
 ## 5. Detection Decision Tree
 
-**Note:** The implementation uses a hybrid approach combining protobuf parsing (primary) and heuristic detection (fallback).
+**Note:** The current implementation uses direct settings-field extraction as the primary signal and heuristic counting as the fallback for change presence.
 
 ```
 Open .pages file
   └── Extract Index.zip
         └── Decode Document.iwa (Snappy → Protobuf)
               │
-              ├── Try Protobuf Parsing
-              │     └── Success?
-              │           ├── YES → Use as PRIMARY signal (High Confidence)
-              │           │     ├── Find TP.DocumentArchive
-              │           │     │     ├── change_tracking_enabled = true? → ENABLED
-              │           │     │     └── change_tracking_paused = true? → PAUSED
-              │           │     └── Find TP.SettingsArchive → Visibility settings
-              │           │
-              │           └── NO → Use Heuristic Detection (Low Confidence)
-              │                 └── Scan for byte patterns
-              │                       ├── 0x08 0x01 0x12 → Insertions (count)
-              │                       └── 0x08 0x02 0x12 → Deletions (count)
+              ├── Decompress Document.iwa
+              │     ├── Read field 40 directly
+              │     │     └── change_tracking_enabled = true? → ENABLED
+              │     ├── Decompress ViewState*.iwa
+              │     │     └── Read field 28
+              │     │           └── paused = true? → PAUSED
+              │     └── If fields unavailable → Use Heuristic Detection (Low Confidence)
+              │           └── Scan for byte patterns
+              │                 ├── 0x08 0x01 0x12 → Insertions (count)
+              │                 └── 0x08 0x02 0x12 → Deletions (count)
               │
               ├── Find TSWP.TextStorageArchive
               │     ├── table_insertion non-empty?
@@ -390,13 +388,14 @@ Open .pages file
 
 #### Hybrid Detection Logic
 
-| Protobuf Parses | Change Detected | Final Status | Confidence |
-|---|---|---|---|
-| YES | YES | Enabled (With Changes) | High |
-| YES | NO | Enabled (No Changes) | High |
-| YES | N/A | Disabled | High |
-| NO | YES | Enabled (With Changes) | Low |
-| NO | NO | Disabled | Low |
+| Enabled | Paused | Change Detected | Final Status | Confidence |
+|---|---|---|---|---|
+| No | No | No | Disabled | High |
+| Yes | No | No | Enabled (No Changes) | High |
+| Yes | No | Yes | Enabled (With Changes) | High |
+| Yes | Yes | No/Yes | Paused | High |
+| Unknown | Unknown | Yes | Enabled (With Changes) | Low |
+| Unknown | Unknown | No | Disabled | Low |
 
 ---
 
@@ -405,7 +404,7 @@ Open .pages file
 | What to Detect | Where to Look | How |
 |---|---|---|
 | **Track changes enabled?** | `Document.iwa` → `TP.DocumentArchive` | Field `change_tracking_enabled = true` |
-| **Tracking paused?** | `Document.iwa` → `TP.DocumentArchive` | Field `change_tracking_paused = true` |
+| **Tracking paused?** | `ViewState*.iwa` | Field `28 = true` |
 | **Insertions exist?** | `Document.iwa` → `TSWP.TextStorageArchive.table_insertion` | Non-empty attribute table |
 | **Deletions exist?** | `Document.iwa` → `TSWP.TextStorageArchive.table_deletion` | Non-empty attribute table |
 | **Insertion count?** | `Document.iwa` → count `kChangeKindInsertion` entries | Scan ChangeArchive records |
@@ -539,7 +538,8 @@ obriensp/iWorkFileFormat/iWorkFileInspector/
 - [x] Decode Snappy compression for each .iwa file
 - [x] Parse Protobuf `ArchiveInfo` → `MessageInfo` chain
 - [x] Load type ID mappings from Common.json + Pages.json
-- [x] Check `TP.DocumentArchive.change_tracking_enabled`
+- [x] Check `Document.iwa` field `change_tracking_enabled`
+- [x] Check `ViewState*.iwa` paused-state field
 - [x] Scan `TSWP.TextStorageArchive.table_insertion` for insertions
 - [x] Scan `TSWP.TextStorageArchive.table_deletion` for deletions
 - [ ] Parse `TSWP.ChangeArchive` records for author/date (struct ready, parser not fully implemented)

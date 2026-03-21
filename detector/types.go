@@ -7,6 +7,7 @@ type TrackChangesStatus int
 const (
 	TCStatusUnknown TrackChangesStatus = iota
 	TCStatusDisabled
+	TCStatusPaused
 	TCStatusEnabledNoChanges
 	TCStatusEnabledWithChanges
 )
@@ -75,6 +76,8 @@ func (s TrackChangesStatus) String() string {
 	switch s {
 	case TCStatusDisabled:
 		return "Disabled"
+	case TCStatusPaused:
+		return "Paused"
 	case TCStatusEnabledNoChanges:
 		return "Enabled (No Changes)"
 	case TCStatusEnabledWithChanges:
