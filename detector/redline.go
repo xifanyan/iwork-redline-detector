@@ -116,6 +116,8 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 			if hasTrackChanges {
 				result.TrackChangesStatus = TCStatusEnabledWithChanges
 				result.SettingEnabled = true
+			} else {
+				result.TrackChangesStatus = TCStatusDisabled
 			}
 		}
 	}

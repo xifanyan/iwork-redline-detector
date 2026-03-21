@@ -56,8 +56,8 @@ func main() {
 	fmt.Printf("Processing %d file(s) with %d thread(s)...\n\n", len(pagesFiles), threads)
 
 	if *debugFlag {
-		fmt.Println("FILEPATH                     | REDLINES | INSERTIONS | DELETIONS")
-		fmt.Println("----------------------------|-----------|------------|----------")
+		fmt.Println("FILEPATH                     | REDLINES | INSERTIONS | DELETIONS | STATUS                     | CONF")
+		fmt.Println("----------------------------|-----------|------------|-----------|---------------------------|-----")
 	}
 
 	type result struct {
@@ -108,11 +108,17 @@ func main() {
 		}
 
 		if *debugFlag {
-			fmt.Printf("%-28s| %-9t | %-10d | %d\n",
+			confidence := "Low"
+			if r.detection.HighConfidence {
+				confidence = "High"
+			}
+			fmt.Printf("%-28s| %-9t | %-10d | %-7d | %-25s | %s\n",
 				r.relPath,
 				hasRedlines,
 				r.detection.InsertionCount,
-				r.detection.DeletionCount)
+				r.detection.DeletionCount,
+				r.detection.TrackChangesStatus.String(),
+				confidence)
 		} else {
 			fmt.Printf("%s\t%t\n", r.relPath, hasRedlines)
 		}
