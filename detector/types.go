@@ -97,6 +97,17 @@ func (s TrackChangesStatus) String() string {
 	}
 }
 
+func (f FormatType) String() string {
+	switch f {
+	case FormatModernIWA:
+		return "Modern"
+	case FormatLegacyXML:
+		return "Pages '09"
+	default:
+		return "Unknown"
+	}
+}
+
 func DetectFormat(pagesPath string) FormatType {
 	r, err := zip.OpenReader(pagesPath)
 	if err != nil {
@@ -104,13 +115,22 @@ func DetectFormat(pagesPath string) FormatType {
 	}
 	defer r.Close()
 
+	hasModern := false
+	hasLegacy := false
 	for _, entry := range r.File {
 		if entry.Name == "Index/Document.iwa" {
-			return FormatModernIWA
+			hasModern = true
 		}
 		if entry.Name == "index.xml" || entry.Name == "index.xml.gz" {
-			return FormatLegacyXML
+			hasLegacy = true
 		}
+	}
+
+	if hasModern {
+		return FormatModernIWA
+	}
+	if hasLegacy {
+		return FormatLegacyXML
 	}
 
 	return FormatUnknown

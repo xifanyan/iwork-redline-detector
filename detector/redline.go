@@ -23,6 +23,7 @@ type Change struct {
 }
 
 type RedlineDetection struct {
+	Format                FormatType
 	TrackChangesStatus    TrackChangesStatus
 	SettingEnabled        bool
 	SettingPaused         bool
@@ -58,6 +59,7 @@ type Author struct {
 
 func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 	result := &RedlineDetection{
+		Format:         FormatUnknown,
 		HighConfidence: false,
 		MarkupSettings: MarkupSettings{
 			ShowCTMarkup:         true,
@@ -69,6 +71,7 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 	}
 
 	format := DetectFormat(pagesPath)
+	result.Format = format
 
 	if format == FormatLegacyXML {
 		return detectRedlinesLegacyXML(pagesPath, result)
@@ -382,7 +385,10 @@ func detectRedlinesLegacyXML(pagesPath string, result *RedlineDetection) (*Redli
 		return nil, fmt.Errorf("no index.xml or index.xml.gz found in archive")
 	}
 
-	insertionCount, deletionCount, trackingEnabled, trackingPaused, highConfidence := parseLegacyIndexXML(indexData)
+	insertionCount, deletionCount, trackingEnabled, trackingPaused, highConfidence, err := parseLegacyIndexXML(indexData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse legacy index.xml: %w", err)
+	}
 
 	result.InsertionCount = insertionCount
 	result.DeletionCount = deletionCount
@@ -429,57 +435,67 @@ func decompressGzip(data []byte) ([]byte, error) {
 	return io.ReadAll(r)
 }
 
-func parseLegacyIndexXML(data []byte) (insertions, deletions int, enabled, paused, highConfidence bool) {
+func parseLegacyIndexXML(data []byte) (insertions, deletions int, enabled, paused, highConfidence bool, err error) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
+	hasAggregateCounts := false
 	for {
 		token, err := decoder.Token()
 		if err != nil {
-			break
+			if err == io.EOF {
+				break
+			}
+			return 0, 0, false, false, false, err
 		}
 
 		switch se := token.(type) {
 		case xml.StartElement:
 			if localName(se, "change-tracking") {
 				for _, attr := range se.Attr {
-					if attr.Name.Local == "enabled" {
+					switch attr.Name.Local {
+					case "enabled":
 						enabled = attr.Value == "true"
 						highConfidence = true
-					}
-					if attr.Name.Local == "suspended" {
+					case "suspended":
 						paused = attr.Value == "true"
 					}
 				}
 			}
 			if localName(se, "text-changes") {
 				for _, attr := range se.Attr {
-					if attr.Name.Local == "sf:insertion-count" || attr.Name.Local == "insertion-count" {
+					switch attr.Name.Local {
+					case "insertion-count":
 						var count int
-						fmt.Sscanf(attr.Value, "%d", &count)
-						insertions = count
-					}
-					if attr.Name.Local == "sf:deletion-count" || attr.Name.Local == "deletion-count" {
+						if _, scanErr := fmt.Sscanf(attr.Value, "%d", &count); scanErr == nil {
+							insertions = count
+							hasAggregateCounts = true
+						}
+					case "deletion-count":
 						var count int
-						fmt.Sscanf(attr.Value, "%d", &count)
-						deletions = count
+						if _, scanErr := fmt.Sscanf(attr.Value, "%d", &count); scanErr == nil {
+							deletions = count
+							hasAggregateCounts = true
+						}
 					}
 				}
 			}
-			if localNameAny(se, "change", "changed", "sf:change", "sf:changed") {
+			if !hasAggregateCounts && localNameAny(se, "change", "changed") {
 				kind := ""
 				for _, attr := range se.Attr {
-					if attr.Name.Local == "kind" || attr.Name.Local == "sf:kind" {
+					if attr.Name.Local == "kind" {
 						kind = attr.Value
+						break
 					}
 				}
-				if kind == "insertion" {
+				switch kind {
+				case "insertion":
 					insertions++
-				} else if kind == "deletion" {
+				case "deletion":
 					deletions++
 				}
 			}
 		}
 	}
-	return
+	return insertions, deletions, enabled, paused, highConfidence, nil
 }
 
 func localName(se xml.StartElement, name string) bool {

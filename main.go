@@ -21,7 +21,7 @@ var (
 func main() {
 	flag.Parse()
 
-	if flag.NArg() < 1 {
+	if flag.NArg() != 1 {
 		fmt.Println("Usage: iwork-redline-detector [-debug] [-threads N] <path-to.pages-file-or-directory>")
 		flag.PrintDefaults()
 		os.Exit(1)
@@ -53,7 +53,9 @@ func main() {
 	}
 
 	fmt.Printf("Processing %d file(s) with %d thread(s)...\n\n", len(pagesFiles), threads)
-	fmt.Printf("DEBUG: Found %d files: %v\n", len(pagesFiles), pagesFiles)
+	if *debugFlag {
+		fmt.Printf("DEBUG: Found %d files: %v\n", len(pagesFiles), pagesFiles)
+	}
 
 	type result struct {
 		file      string
@@ -94,6 +96,8 @@ func main() {
 		hasRedlines    bool
 		insertionCount int
 		deletionCount  int
+		status         string
+		confidence     string
 		format         string
 	}
 
@@ -104,11 +108,6 @@ func main() {
 		if res.err != nil {
 			fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", res.file, res.err)
 			continue
-		}
-
-		format := "Modern"
-		if strings.Contains(res.file, "pages09/") {
-			format = "Pages '09"
 		}
 
 		d := res.detection
@@ -122,7 +121,9 @@ func main() {
 			hasRedlines:    hasRedlines,
 			insertionCount: d.InsertionCount,
 			deletionCount:  d.DeletionCount,
-			format:         format,
+			status:         d.TrackChangesStatus.String(),
+			confidence:     map[bool]string{true: "High", false: "Low"}[d.HighConfidence],
+			format:         d.Format.String(),
 		})
 	}
 
@@ -133,19 +134,7 @@ func main() {
 	if *debugFlag {
 		tbl := table.New("FILEPATH", "REDLINES", "INSERTIONS", "DELETIONS", "STATUS", "CONF", "FORMAT")
 		for _, r := range rows {
-			statusStr := "N/A"
-			if r.insertionCount > 0 || r.deletionCount > 0 {
-				statusStr = "Changes"
-			} else if r.hasRedlines {
-				statusStr = "Enabled"
-			} else {
-				statusStr = "None"
-			}
-			confidence := "Low"
-			if r.hasRedlines {
-				confidence = "High"
-			}
-			tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, statusStr, confidence, r.format)
+			tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, r.status, r.confidence, r.format)
 		}
 		tbl.Print()
 	} else {

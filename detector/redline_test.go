@@ -1,6 +1,7 @@
 package detector
 
 import (
+	"archive/zip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -409,5 +410,91 @@ func TestCountPattern(t *testing.T) {
 				t.Errorf("countPattern() = %d, want %d", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestParseLegacyIndexXML_Malformed(t *testing.T) {
+	_, _, _, _, _, err := parseLegacyIndexXML([]byte("<sl:document><broken>"))
+	if err == nil {
+		t.Fatal("parseLegacyIndexXML expected error for malformed XML")
+	}
+}
+
+func TestDetectFormat_LegacyOutsidePages09Name(t *testing.T) {
+	src := filepath.Join("..", "testdata", "pages09", "normal.pages")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("failed to read source test file: %v", err)
+	}
+
+	tmp := filepath.Join(t.TempDir(), "legacy-renamed.pages")
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+
+	result, err := DetectRedlines(tmp)
+	if err != nil {
+		t.Fatalf("DetectRedlines returned error: %v", err)
+	}
+	if result.Format != FormatLegacyXML {
+		t.Fatalf("DetectRedlines format = %v, want %v", result.Format, FormatLegacyXML)
+	}
+}
+
+func TestDetectFormat_PrefersModernWhenBothEntriesExist(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "hybrid.pages")
+	file, err := os.Create(tmp)
+	if err != nil {
+		t.Fatalf("failed to create temp archive: %v", err)
+	}
+
+	zw := zip.NewWriter(file)
+	entries := []string{"index.xml", "Index/Document.iwa"}
+	for _, name := range entries {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("failed to create zip entry %s: %v", name, err)
+		}
+		if _, err := w.Write([]byte("x")); err != nil {
+			t.Fatalf("failed to write zip entry %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("failed to close zip writer: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("failed to close temp archive: %v", err)
+	}
+
+	if got := DetectFormat(tmp); got != FormatModernIWA {
+		t.Fatalf("DetectFormat(hybrid) = %v, want %v", got, FormatModernIWA)
+	}
+}
+
+func TestDetectRedlinesLegacyXML_MalformedArchive(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "broken-legacy.pages")
+	file, err := os.Create(tmp)
+	if err != nil {
+		t.Fatalf("failed to create temp archive: %v", err)
+	}
+
+	zw := zip.NewWriter(file)
+	w, err := zw.Create("index.xml")
+	if err != nil {
+		t.Fatalf("failed to create index.xml entry: %v", err)
+	}
+	if _, err := w.Write([]byte("<sl:document><broken>")); err != nil {
+		t.Fatalf("failed to write index.xml: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("failed to close zip writer: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("failed to close archive file: %v", err)
+	}
+
+	_, err = DetectRedlines(tmp)
+	if err == nil {
+		t.Fatal("DetectRedlines expected error for malformed legacy XML archive")
 	}
 }
