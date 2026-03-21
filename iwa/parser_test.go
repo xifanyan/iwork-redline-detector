@@ -15,22 +15,22 @@ func TestExtractDocumentIWA(t *testing.T) {
 	}{
 		{
 			name:     "normal pages",
-			filename: "pages.normal.pages",
+			filename: "normal.pages",
 			wantErr:  false,
 		},
 		{
 			name:     "tracking pages",
-			filename: "pages.track.pages",
+			filename: "track.not-accepted.pages",
 			wantErr:  false,
 		},
 		{
 			name:     "blank tracking pages",
-			filename: "pages.blank.track.pages",
+			filename: "blank.track.pages",
 			wantErr:  false,
 		},
 		{
 			name:     "deletion pages",
-			filename: "pages.notracking.deletion.pages",
+			filename: "deletion.track-paused.pages",
 			wantErr:  false,
 		},
 		{
@@ -67,7 +67,7 @@ func TestExtractDocumentIWA(t *testing.T) {
 func TestExtractAnnotationStorageIWA(t *testing.T) {
 	testdataDir := filepath.Join("..", "testdata")
 
-	_, err := ExtractAnnotationStorageIWA(filepath.Join(testdataDir, "pages.normal.pages"))
+	_, err := ExtractAnnotationStorageIWA(filepath.Join(testdataDir, "normal.pages"))
 	if err != nil {
 		t.Logf("ExtractAnnotationStorageIWA returned error (may be expected): %v", err)
 	}
@@ -90,12 +90,12 @@ func TestDecompressSnappy(t *testing.T) {
 	}{
 		{
 			name:     "normal pages",
-			filename: "pages.normal.pages",
+			filename: "normal.pages",
 			wantErr:  false,
 		},
 		{
 			name:     "tracking pages",
-			filename: "pages.track.pages",
+			filename: "track.not-accepted.pages",
 			wantErr:  false,
 		},
 		{
