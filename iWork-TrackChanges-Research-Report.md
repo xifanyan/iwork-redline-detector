@@ -3,6 +3,8 @@
 **Author:** Claude (Macro Trading Assistant)
 **Purpose:** Detect track changes & redlines in Apple iWork documents for legal document review workflows
 
+> **Note:** This document is a technical research reference. For usage and implementation details, see [README.md](./README.md).
+
 ---
 
 ## 1. Format Overview
@@ -106,6 +108,14 @@ Keynote supports **annotations and comments**, but NOT inline track changes (no 
 | Inline insertions/deletions | ❌ |
 | Track changes | ❌ |
 
+#### Keynote Comment Type IDs
+
+| Type ID | Message Name | Purpose |
+|---------|-------------|---------|
+| 2006 | `KNShapeInfoArchive` | Shape information (may contain comments) |
+| 2013 | `TSWP.HighlightArchive` | Highlighted text comments |
+| 2014 | `TSWP.CommentInfoArchive` | Comment bubble metadata |
+
 ### Numbers — ⚠️ Comments Only
 
 Numbers supports **cell comments**, but NOT track changes:
@@ -117,6 +127,15 @@ Numbers supports **cell comments**, but NOT track changes:
 | Inline insertions/deletions | ❌ |
 | Track changes | ❌ |
 
+#### Numbers Comment Type IDs
+
+| Type ID | Message Name | Purpose |
+|---------|-------------|---------|
+| 2001 | `TSTTableInfoArchive` | Table information |
+| 5000 | `TNCellCommentArchive` | Cell comment data |
+| 2013 | `TSWP.HighlightArchive` | Highlighted text comments |
+| 2014 | `TSWP.CommentInfoArchive` | Comment bubble metadata |
+
 ---
 
 ## 4. Track Changes Detection — Complete Reference
@@ -124,6 +143,18 @@ Numbers supports **cell comments**, but NOT track changes:
 ### 4.1 Protobuf Type ID Reference
 
 **Source:** `Common.json` + `Pages.json` from [obriensp/iWorkFileFormat](https://github.com/obriensp/iWorkFileFormat)
+
+#### Core Document Types
+
+| Type ID | Message Name | App | Purpose |
+|---------|-------------|-----|---------|
+| **1001** | `TSWP.TextStorageArchive` | Pages | Text content with style attributes |
+| **1002** | `TP.DocumentArchive` | Pages | Document settings and metadata |
+| **1003** | `TP.SettingsArchive` | Pages | Markup visibility settings |
+| **1004** | `TSWP.ChangeArchive` | Pages | Individual change record |
+| **1005** | `TSWP.ChangeSessionArchive` | Pages | Change session (author + timestamp) |
+
+#### Command and Comment Types
 
 | Type ID | Message Name | App | Purpose |
 |---------|-------------|-----|---------|
@@ -267,26 +298,77 @@ message AnnotationAuthorStorageArchive {
 }
 ```
 
+### 4.8 Heuristic Detection (Fallback)
+
+When protobuf parsing fails or is unavailable, the detector uses **byte-pattern scanning** as a fallback method.
+
+#### Why Heuristic Detection?
+
+1. **Protobuf Parsing May Fail**: Complex IWA format or corruption can prevent successful protobuf decoding
+2. **Graceful Degradation**: Without heuristic, malformed files would produce no results instead of best-effort detection
+3. **Complementary Approach**: Byte patterns can detect tracked changes even when protobuf structure can't be fully parsed
+
+#### Byte Patterns Used
+
+The scanner looks for specific byte sequences that indicate ChangeArchive records:
+
+| Change Type | Byte Pattern | Meaning |
+|---|---|---|
+| Insertion | `0x08 0x01 0x12` | Field 1 (kind) = 1, Field 2 (session) follows |
+| Deletion | `0x08 0x02 0x12` | Field 1 (kind) = 2, Field 2 (session) follows |
+
+#### Threshold-Based Detection
+
+Normal documents already contain these byte patterns for **regular text styling** (not actual track changes):
+
+- Baseline insertions: ~20 patterns from character styling attributes
+- Baseline deletions: ~1 pattern from formatting
+
+To avoid false positives, the detector uses thresholds:
+
+```
+has_redlines = (insertion_count > 21) OR (deletion_count > 1)
+```
+
+#### Confidence Levels
+
+The detector reports confidence based on detection method:
+
+| Confidence | Method | Source |
+|---|---|---|
+| **High** | Protobuf-based | Direct reading of `TP.DocumentArchive` field 40 |
+| **Low** | Heuristic | Byte-pattern counting, may have false positives |
+
+#### Limitations of Heuristic Detection
+
+- **False Positives**: Documents with many character styles may exceed thresholds
+- **No Author Info**: Byte patterns don't reveal who made changes
+- **No Timestamps**: Cannot determine when changes were made
+- **Cannot Distinguish States**: Can't differentiate between "TC enabled but no changes" vs "TC disabled"
+
 ---
 
 ## 5. Detection Decision Tree
+
+**Note:** The implementation uses a hybrid approach combining protobuf parsing (primary) and heuristic detection (fallback).
 
 ```
 Open .pages file
   └── Extract Index.zip
         └── Decode Document.iwa (Snappy → Protobuf)
               │
-              ├── Find TP.DocumentArchive
-              │     ├── change_tracking_enabled = true?
-              │     │     └── YES → Track Changes feature is ENABLED
-              │     └── change_tracking_paused = true?
-              │           └── YES → Tracking is currently PAUSED
-              │
-              ├── Find TP.SettingsArchive
-              │     ├── show_ct_markup = true?     → Insertions visible
-              │     ├── show_ct_deletions = true?  → Deletions visible
-              │     ├── change_bars_visible = true? → Margin bars visible
-              │     └── annotations_visible = true? → Comments visible
+              ├── Try Protobuf Parsing
+              │     └── Success?
+              │           ├── YES → Use as PRIMARY signal (High Confidence)
+              │           │     ├── Find TP.DocumentArchive
+              │           │     │     ├── change_tracking_enabled = true? → ENABLED
+              │           │     │     └── change_tracking_paused = true? → PAUSED
+              │           │     └── Find TP.SettingsArchive → Visibility settings
+              │           │
+              │           └── NO → Use Heuristic Detection (Low Confidence)
+              │                 └── Scan for byte patterns
+              │                       ├── 0x08 0x01 0x12 → Insertions (count)
+              │                       └── 0x08 0x02 0x12 → Deletions (count)
               │
               ├── Find TSWP.TextStorageArchive
               │     ├── table_insertion non-empty?
@@ -306,6 +388,16 @@ Open .pages file
                           └── List of all authors with names + colors
 ```
 
+#### Hybrid Detection Logic
+
+| Protobuf Parses | Change Detected | Final Status | Confidence |
+|---|---|---|---|
+| YES | YES | Enabled (With Changes) | High |
+| YES | NO | Enabled (No Changes) | High |
+| YES | N/A | Disabled | High |
+| NO | YES | Enabled (With Changes) | Low |
+| NO | NO | Disabled | Low |
+
 ---
 
 ## 6. Quick Reference Table
@@ -323,10 +415,13 @@ Open .pages file
 | **Comments exist?** | `Document.iwa` → `TSWP.HighlightArchive` / `CommentInfoArchive` | Present |
 | **Comment authors?** | `AnnotationAuthorStorage.iwa` → `AnnotationAuthorStorageArchive` | Name + color per author |
 | **Markup visible?** | `Document.iwa` → `TP.SettingsArchive` | `show_ct_markup`, `change_bars_visible`, etc. |
+| **Heuristic detection?** | Decompressed bytes | Scan for `0x08 0x01 0x12` (insertion) and `0x08 0x02 0x12` (deletion) |
 
 ---
 
 ## 7. Parsing Pipeline
+
+> **Note:** The actual implementation uses Go (see `detector/redline.go` and `iwa/parser.go`). The Python examples in this section are for illustrative purposes only.
 
 ### Step 1: Extract Index.zip
 
@@ -440,15 +535,15 @@ obriensp/iWorkFileFormat/iWorkFileInspector/
 
 ## 10. Implementation Checklist
 
-- [ ] Extract `Index.zip` from .pages bundle
-- [ ] Decode Snappy compression for each .iwa file
-- [ ] Parse Protobuf `ArchiveInfo` → `MessageInfo` chain
-- [ ] Load type ID mappings from Common.json + Pages.json
-- [ ] Check `TP.DocumentArchive.change_tracking_enabled`
-- [ ] Scan `TSWP.TextStorageArchive.table_insertion` for insertions
-- [ ] Scan `TSWP.TextStorageArchive.table_deletion` for deletions
-- [ ] Parse `TSWP.ChangeArchive` records for author/date
-- [ ] Check `TSWP.HighlightArchive` for comments
-- [ ] Parse `AnnotationAuthorStorage.iwa` for author list
-- [ ] Report markup visibility settings from `TP.SettingsArchive`
-- [ ] Handle hidden changes (`hidden=true`)
+- [x] Extract `Index.zip` from .pages bundle
+- [x] Decode Snappy compression for each .iwa file
+- [x] Parse Protobuf `ArchiveInfo` → `MessageInfo` chain
+- [x] Load type ID mappings from Common.json + Pages.json
+- [x] Check `TP.DocumentArchive.change_tracking_enabled`
+- [x] Scan `TSWP.TextStorageArchive.table_insertion` for insertions
+- [x] Scan `TSWP.TextStorageArchive.table_deletion` for deletions
+- [ ] Parse `TSWP.ChangeArchive` records for author/date (struct ready, parser not fully implemented)
+- [x] Check `TSWP.HighlightArchive` for comments
+- [x] Parse `AnnotationAuthorStorage.iwa` for author list
+- [x] Report markup visibility settings from `TP.SettingsArchive`
+- [x] Handle hidden changes (`hidden=true`)
