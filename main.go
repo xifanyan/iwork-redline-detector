@@ -112,12 +112,16 @@ func main() {
 			if r.detection.HighConfidence {
 				confidence = "High"
 			}
+			statusStr := r.detection.TrackChangesStatus.String()
+			if !r.detection.HighConfidence {
+				statusStr += "*"
+			}
 			fmt.Printf("%-28s| %-9t | %-10d | %-7d | %-25s | %s\n",
 				r.relPath,
 				hasRedlines,
 				r.detection.InsertionCount,
 				r.detection.DeletionCount,
-				r.detection.TrackChangesStatus.String(),
+				statusStr,
 				confidence)
 		} else {
 			fmt.Printf("%s\t%t\n", r.relPath, hasRedlines)
