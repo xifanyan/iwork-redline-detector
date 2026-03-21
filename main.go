@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/rodaine/table"
 	"github.com/user/iwork-redline-detector/detector"
 )
 
@@ -55,11 +56,6 @@ func main() {
 
 	fmt.Printf("Processing %d file(s) with %d thread(s)...\n\n", len(pagesFiles), threads)
 
-	if *debugFlag {
-		fmt.Println("FILEPATH                     | REDLINES | INSERTIONS | DELETIONS | STATUS                     | CONF")
-		fmt.Println("----------------------------|-----------|------------|-----------|---------------------------|-----")
-	}
-
 	type result struct {
 		file      string
 		relPath   string
@@ -94,6 +90,16 @@ func main() {
 		close(results)
 	}()
 
+	type row struct {
+		filePath       string
+		hasRedlines    bool
+		insertionCount int
+		deletionCount  int
+		statusStr      string
+		confidence     string
+	}
+
+	var rows []row
 	redlinesFound := 0
 	for r := range results {
 		if r.err != nil {
@@ -107,31 +113,37 @@ func main() {
 			redlinesFound++
 		}
 
-		if *debugFlag {
-			confidence := "Low"
-			if r.detection.HighConfidence {
-				confidence = "High"
-			}
-			statusStr := r.detection.TrackChangesStatus.String()
-			if r.detection.SettingPaused && r.detection.TrackedChangesPresent {
-				statusStr += " (With Changes)"
-			}
-			if !r.detection.HighConfidence {
-				statusStr += "*"
-			}
-			fmt.Printf("%-28s| %-9t | %-10d | %-7d | %-25s | %s\n",
-				r.relPath,
-				hasRedlines,
-				r.detection.InsertionCount,
-				r.detection.DeletionCount,
-				statusStr,
-				confidence)
-		} else {
-			fmt.Printf("%s\t%t\n", r.relPath, hasRedlines)
+		confidence := "Low"
+		if r.detection.HighConfidence {
+			confidence = "High"
 		}
+		statusStr := r.detection.TrackChangesStatus.String()
+		if r.detection.SettingPaused && r.detection.TrackedChangesPresent {
+			statusStr += " (With Changes)"
+		}
+		if !r.detection.HighConfidence {
+			statusStr += "*"
+		}
+		filePath := r.relPath
+		if len(filePath) > 50 {
+			filePath = filePath[:47] + "..."
+		}
+		rows = append(rows, row{filePath, hasRedlines, r.detection.InsertionCount, r.detection.DeletionCount, statusStr, confidence})
 	}
 
-	fmt.Printf("\n%d file(s) processed, %d with redlines\n", len(pagesFiles), redlinesFound)
+	if *debugFlag {
+		tbl := table.New("FILEPATH", "REDLINES", "INSERTIONS", "DELETIONS", "STATUS", "CONF")
+		for _, r := range rows {
+			tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, r.statusStr, r.confidence)
+		}
+		tbl.Print()
+	} else {
+		tbl := table.New("FILEPATH", "REDLINES")
+		for _, r := range rows {
+			tbl.AddRow(r.filePath, r.hasRedlines)
+		}
+		tbl.Print()
+	}
 
 	if redlinesFound > 0 {
 		os.Exit(1)
