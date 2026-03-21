@@ -66,13 +66,14 @@ The detector combines both signals to determine the final status:
 
 **1. File Structure**
 A `.pages` file is a ZIP archive:
-```
-DocumentName.pages/
-└── Index/
-    ├── Document.iwa  ← Main content + track changes settings
-    ├── DocumentStylesheet.iwa
-    └── AnnotationAuthorStorage.iwa  ← Author names/colors
-```
+
+| Path | Description |
+|-------|-------------|
+| `DocumentName.pages/` | Root of .pages bundle |
+| `Index/` | Contains all document data |
+| `Index/Document.iwa` | Main content + track changes settings |
+| `Index/DocumentStylesheet.iwa` | Document styles |
+| `Index/AnnotationAuthorStorage.iwa` | Author names and colors |
 
 **2. Parse Document.iwa**
 The `Document.iwa` file contains:
@@ -131,25 +132,38 @@ Normal documents already have ~20 of these patterns for regular text styling (no
 
 ### In Summary
 
-```
-.pages file → ZIP → Index/Document.iwa → Snappy decompress →
-Search for byte patterns → Count them → Compare to threshold →
-REDLINES or OK
-```
+| Step | Description |
+|-------|-------------|
+| 1 | Open .pages file (ZIP format) |
+| 2 | Extract Index/Document.iwa |
+| 3 | Decompress with Snappy |
+| 4 | Scan for byte patterns (insertions/deletions) |
+| 5 | Compare to threshold (insertions > 21 OR deletions > 1) |
+| 6 | Return result: REDLINES or OK |
 
 ## Implementation
 
 ### Architecture
 
+| Component | Description |
+|-----------|-------------|
+| `main.go` | CLI entry point and command-line argument parsing |
+| `iwa/parser.go` | IWA file parsing (Snappy decompression + protobuf decoding) |
+| `detector/types.go` | Type ID mappings, field constants, TrackChangesStatus enum |
+| `detector/redline.go` | Redline detection logic + protobuf settings parsing |
+| `bin/iwork-redline-detector` | Compiled binary executable |
+
+**Project Structure:**
 ```
-├── main.go              # CLI entry point
+iwork-redline-detector/
+├── main.go
 ├── iwa/
-│   └── parser.go        # IWA file parsing (Snappy + protobuf)
+│   └── parser.go
 ├── detector/
-│   ├── types.go         # Type IDs, constants, TrackChangesStatus enum
-│   └── redline.go       # Redline detection logic + protobuf parsing
+│   ├── types.go
+│   └── redline.go
 └── bin/
-    └── iwork-redline-detector  # Compiled binary
+    └── iwork-redline-detector
 ```
 
 ### Detection Logic
