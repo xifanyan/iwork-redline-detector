@@ -121,8 +121,10 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 		default:
 			result.TrackChangesStatus = TCStatusDisabled
 		}
-	} else if result.TrackedChangesPresent {
+	} else if result.SettingEnabled && result.TrackedChangesPresent {
 		result.TrackChangesStatus = TCStatusEnabledWithChanges
+	} else if result.SettingEnabled {
+		result.TrackChangesStatus = TCStatusEnabledNoChanges
 	} else {
 		result.TrackChangesStatus = TCStatusDisabled
 	}
@@ -408,8 +410,10 @@ func detectRedlinesLegacyXML(pagesPath string, result *RedlineDetection) (*Redli
 		default:
 			result.TrackChangesStatus = TCStatusDisabled
 		}
-	} else if result.TrackedChangesPresent {
+	} else if trackingEnabled && result.TrackedChangesPresent {
 		result.TrackChangesStatus = TCStatusEnabledWithChanges
+	} else if trackingEnabled {
+		result.TrackChangesStatus = TCStatusEnabledNoChanges
 	} else {
 		result.TrackChangesStatus = TCStatusDisabled
 	}
