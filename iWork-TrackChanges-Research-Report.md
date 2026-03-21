@@ -177,14 +177,13 @@ In `Document.iwa` — protobuf message `TP.DocumentArchive`:
 message DocumentArchive {
   // ... other fields ...
   optional bool change_tracking_enabled = 40;  // ← Track changes is ON
-  optional bool change_tracking_paused  = 45;  // ← Tracking is paused
+  // Note: change_tracking_paused is not reliably stored here in all Pages versions
 }
 ```
 
 **Detection:**
 ```
 if change_tracking_enabled == true  → Track changes feature is ENABLED
-if change_tracking_paused  == true  → Tracking is PAUSED
 ```
 
 ### 4.3 Markup Visibility Settings (TP.SettingsArchive)
@@ -538,12 +537,11 @@ obriensp/iWorkFileFormat/iWorkFileInspector/
 - [x] Decode Snappy compression for each .iwa file
 - [x] Parse Protobuf `ArchiveInfo` → `MessageInfo` chain
 - [x] Load type ID mappings from Common.json + Pages.json
-- [x] Check `Document.iwa` field `change_tracking_enabled`
-- [x] Check `ViewState*.iwa` paused-state field
-- [x] Scan `TSWP.TextStorageArchive.table_insertion` for insertions
-- [x] Scan `TSWP.TextStorageArchive.table_deletion` for deletions
+- [x] Check `Document.iwa` field `40` for `change_tracking_enabled`
+- [x] Check `ViewState*.iwa` field `28` for paused state
+- [x] Scan decompressed bytes for insertion/deletion change markers (heuristic)
 - [ ] Parse `TSWP.ChangeArchive` records for author/date (struct ready, parser not fully implemented)
 - [x] Check `TSWP.HighlightArchive` for comments
 - [x] Parse `AnnotationAuthorStorage.iwa` for author list
 - [x] Report markup visibility settings from `TP.SettingsArchive`
-- [x] Handle hidden changes (`hidden=true`)
+- [ ] Handle hidden changes (`hidden=true`)
