@@ -267,12 +267,16 @@ When protobuf parsing fails, the detector falls back to heuristic detection but 
 
 ## Test Results
 
+> **Note:** All tests show "Low" confidence because protobuf parsing is not working correctly. The status values are based on heuristic detection.
+
 | File | Insertions | Deletions | Redlines | Status |
 |------|------------|-----------|----------|---------|
-| pages.normal.pages | 20 | 1 | false | Track Changes disabled |
-| pages.track.pages | 22 | 1 | true | Enabled with changes |
-| pages.blank.track.pages | 20 | 1 | false | Enabled, no changes yet |
-| pages.notracking.deletion.pages | 21 | 2 | true | Deletions detected (no tracking) |
+| pages.normal.pages | 20 | 1 | false | Disabled |
+| pages.track.pages | 22 | 1 | true | Enabled (With Changes) |
+| pages.blank.track.pages | 20 | 1 | false | Disabled* |
+| pages.notracking.deletion.pages | 21 | 2 | true | Enabled (With Changes)* |
+
+*Status with asterisk indicates heuristic-based detection (not from document settings)
 
 ## Technical Notes
 
@@ -286,10 +290,10 @@ When protobuf parsing fails, the detector falls back to heuristic detection but 
 ## Limitations
 
 - **Keynote and Numbers**: Only support comments/annotations, **not** inline track changes
-- **Heuristic threshold**: May have false positives on documents with many character styles (when protobuf parsing fails)
-- **Change records**: Individual change author/timestamp parsing not yet fully implemented (structure ready)
+- **Protobuf parsing**: The IWA protobuf structure differs from assumptions; DocumentArchive type ID (1002) is not being found in current implementation. Status is based on heuristic detection only.
+- **Heuristic threshold**: May have false positives on documents with many character styles - cannot distinguish "TC enabled with no changes" from "TC disabled" when insertion count ≈ 20
+- **Change records**: Individual change author/timestamp parsing not yet fully implemented
 - **Legal-grade detection**: For highest confidence, compare against a known-clean baseline document
-- **Protobuf without schema**: Full field-level parsing requires protobuf schema definitions
 
 ## Related
 
