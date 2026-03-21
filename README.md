@@ -243,17 +243,21 @@ type RedlineDetection struct {
 
 **Normal mode** (tab-separated):
 ```
-pages.normal.pages	false
-pages.track.pages	true
+normal.pages	false
+normal.track.accepted.pages	false
+track.not-accepted.pages	true
+deletion.track-paused.pages	true
 ```
 
 **Debug mode**:
 ```
 FILEPATH                     | REDLINES | INSERTIONS | DELETIONS | STATUS                     | CONF
-pages.normal.pages          | false     | 20         | 1         | Disabled                  | High
-pages.blank.track.pages     | false     | 20         | 1         | Enabled (No Changes)      | High
-pages.track.pages           | true      | 22         | 1         | Enabled (With Changes)    | High
-pages.notracking.deletion.pages | true  | 21         | 2         | Paused (With Changes)     | High
+----------------------------|-----------|------------|-----------|---------------------------|-----
+normal.pages                | false     | 20         | 1         | Disabled                  | High
+blank.track.pages           | false     | 20         | 1         | Enabled (No Changes)      | High
+normal.track.accepted.pages| false     | 21         | 1         | Enabled (No Changes)      | High
+track.not-accepted.pages   | true      | 22         | 1         | Enabled (With Changes)    | High
+deletion.track-paused.pages| true      | 21         | 2         | Paused (With Changes)     | High
 ```
 
 ### Detection Confidence
@@ -271,10 +275,11 @@ When settings fields cannot be found, the detector falls back to heuristic detec
 
 | File | Insertions | Deletions | Redlines | Status |
 |------|------------|-----------|----------|---------|
-| pages.normal.pages | 20 | 1 | false | Disabled |
-| pages.track.pages | 22 | 1 | true | Enabled (With Changes) |
-| pages.blank.track.pages | 20 | 1 | false | Enabled (No Changes) |
-| pages.notracking.deletion.pages | 21 | 2 | true | Paused (With Changes) |
+| normal.pages | 20 | 1 | false | Disabled |
+| blank.track.pages | 20 | 1 | false | Enabled (No Changes) |
+| normal.track.accepted.pages | 21 | 1 | false | Enabled (No Changes) |
+| track.not-accepted.pages | 22 | 1 | true | Enabled (With Changes) |
+| deletion.track-paused.pages | 21 | 2 | true | Paused (With Changes) |
 
 ## Technical Notes
 
