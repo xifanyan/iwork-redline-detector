@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/rodaine/table"
-	"github.com/user/iwork-redline-detector/detector"
+	"github.com/xifanyan/iwork-redline-detector/detector"
 )
 
 var (

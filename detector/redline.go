@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/golang/snappy"
-	"github.com/user/iwork-redline-detector/iwa"
+	"github.com/xifanyan/iwork-redline-detector/iwa"
 )
 
 type Change struct {

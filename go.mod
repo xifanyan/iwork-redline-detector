@@ -1,4 +1,4 @@
-module github.com/user/iwork-redline-detector
+module github.com/xifanyan/iwork-redline-detector
 
 go 1.24.0
 
