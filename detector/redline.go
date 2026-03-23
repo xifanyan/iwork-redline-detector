@@ -146,17 +146,6 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 	return result, nil
 }
 
-func parseDocumentArchive(data []byte, result *RedlineDetection) {
-	msg := iwa.ParseMessageData(data)
-
-	if val, ok := msg.Fields[FieldChangeTrackingEnabled]; ok && len(val) > 0 {
-		result.SettingEnabled = decodeBool(val)
-	}
-	if val, ok := msg.Fields[FieldChangeTrackingPaused]; ok && len(val) > 0 {
-		result.SettingPaused = decodeBool(val)
-	}
-}
-
 func detectBooleanFieldValue(data []byte, fieldNum uint64) (bool, bool) {
 	tag := encodeVarint(fieldNum << 3)
 	for offset := 0; offset < len(data); {

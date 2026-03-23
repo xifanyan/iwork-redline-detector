@@ -45,7 +45,6 @@ const (
 
 const (
 	FieldChangeTrackingEnabled = 40
-	FieldChangeTrackingPaused  = 45
 	FieldChangeKind            = 1
 	FieldChangeSession         = 2
 	FieldChangeDate            = 3

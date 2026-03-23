@@ -78,7 +78,7 @@ The detector uses a **multi-signal detection strategy** to accurately identify t
 The detector decompresses the relevant `.iwa` payloads and reads the boolean settings fields directly:
 
 - **`Document.iwa`**: field 40 indicates whether Track Changes is enabled
-- **`ViewState*.iwa`**: field 28 indicates whether tracking is currently paused
+- **`ViewState*.iwa`** (contains `TP.UIStateArchive`): field 28 indicates whether tracking is currently paused
 - **`TP.SettingsArchive` (when parsed)**: provides markup visibility settings
 
 This lets the tool distinguish `Disabled`, `Paused`, and `Enabled (No Changes)` without relying only on insertion/deletion counts.
@@ -141,7 +141,7 @@ The `Document.iwa` file contains:
 **3. Read Track Changes Setting**
 Read the decompressed settings signals:
 - **Document field 40**: Track Changes enabled
-- **ViewState field 28**: Track Changes paused
+- **UIStateArchive field 28** (in ViewState*.iwa): Track Changes paused
 
 **4. Count Changes**
 Scan decompressed data for ChangeArchive patterns:
@@ -223,8 +223,8 @@ The detector combines **direct settings field reads** with **heuristic change co
 ```go
 1. Decompress Document.iwa
 2. Read field 40 (change_tracking_enabled)
-3. Decompress ViewState*.iwa
-4. Read field 28 (paused state)
+3. Decompress ViewState*.iwa (contains UIStateArchive)
+4. Read field 28 from UIStateArchive (paused state)
 5. Result: Definitive current Track Changes mode
 ```
 
@@ -258,7 +258,7 @@ type RedlineDetection struct {
     Format                FormatType        // Detected file format: Modern or Legacy XML
     TrackChangesStatus    TrackChangesStatus // Disabled, Paused, EnabledNoChanges, EnabledWithChanges
     SettingEnabled        bool               // From Document.iwa field 40 (modern) or sl:change-tracking (legacy)
-    SettingPaused         bool               // From ViewState field 28 (modern) or sl:suspended (legacy)
+    SettingPaused         bool               // From UIStateArchive field 28 in ViewState*.iwa (modern) or sl:suspended (legacy)
     TrackedChangesPresent bool               // From heuristic scan (modern) or sf:changed elements (legacy)
     HighConfidence        bool               // True if settings fields were found
 

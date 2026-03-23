@@ -359,8 +359,8 @@ Open .pages file
               ├── Decompress Document.iwa
               │     ├── Read field 40 directly
               │     │     └── change_tracking_enabled = true? → ENABLED
-              │     ├── Decompress ViewState*.iwa
-              │     │     └── Read field 28
+              │     ├── Decompress ViewState*.iwa (contains UIStateArchive)
+              │     │     └── Read UIStateArchive field 28
               │     │           └── paused = true? → PAUSED
               │     └── If fields unavailable → Use Heuristic Detection (Low Confidence)
               │           └── Scan for byte patterns
@@ -403,7 +403,7 @@ Open .pages file
 | What to Detect | Where to Look | How |
 |---|---|---|
 | **Track changes enabled?** | `Document.iwa` → `TP.DocumentArchive` | Field `change_tracking_enabled = true` |
-| **Tracking paused?** | `ViewState*.iwa` | Field `28 = true` |
+| **Tracking paused?** | `ViewState*.iwa` → `TP.UIStateArchive` | Field `28 = true` (change_tracking_paused) |
 | **Insertions exist?** | `Document.iwa` → `TSWP.TextStorageArchive.table_insertion` | Non-empty attribute table |
 | **Deletions exist?** | `Document.iwa` → `TSWP.TextStorageArchive.table_deletion` | Non-empty attribute table |
 | **Insertion count?** | `Document.iwa` → count `kChangeKindInsertion` entries | Scan ChangeArchive records |
@@ -538,7 +538,7 @@ obriensp/iWorkFileFormat/iWorkFileInspector/
 - [x] Parse Protobuf `ArchiveInfo` → `MessageInfo` chain
 - [x] Load type ID mappings from Common.json + Pages.json
 - [x] Check `Document.iwa` field `40` for `change_tracking_enabled`
-- [x] Check `ViewState*.iwa` field `28` for paused state
+- [x] Check `ViewState*.iwa` (UIStateArchive) field `28` for paused state
 - [x] Scan decompressed bytes for insertion/deletion change markers (heuristic)
 - [ ] Parse `TSWP.ChangeArchive` records for author/date (struct ready, parser not fully implemented)
 - [x] Check `TSWP.HighlightArchive` for comments
