@@ -15,6 +15,7 @@ import (
 
 var (
 	debugFlag   = flag.Bool("debug", false, "Show detailed information (insertions, deletions, etc.)")
+	csvFlag     = flag.String("csv", "", "Output results as CSV to specified file")
 	threadsFlag = flag.Int("threads", 2, "Number of concurrent threads")
 )
 
@@ -22,7 +23,7 @@ func main() {
 	flag.Parse()
 
 	if flag.NArg() != 1 {
-		fmt.Println("Usage: iwork-redline-detector [-debug] [-threads N] <path-to.pages-file-or-directory>")
+		fmt.Println("Usage: iwork-redline-detector [-debug] [-csv <filename>] [-threads N] <path-to.pages-file-or-directory>")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -93,6 +94,7 @@ func main() {
 		hasRedlines    bool
 		insertionCount int
 		deletionCount  int
+		comments       string
 		status         string
 		confidence     string
 		format         string
@@ -109,8 +111,16 @@ func main() {
 
 		d := res.detection
 		hasRedlines := d.SettingEnabled && d.TrackedChangesPresent
+		if d.HasComments {
+			hasRedlines = true
+		}
 		if hasRedlines {
 			redlinesFound++
+		}
+
+		comments := ""
+		if d.HasComments {
+			comments = "Enabled"
 		}
 
 		rows = append(rows, row{
@@ -118,6 +128,7 @@ func main() {
 			hasRedlines:    hasRedlines,
 			insertionCount: d.InsertionCount,
 			deletionCount:  d.DeletionCount,
+			comments:       comments,
 			status:         d.TrackChangesStatus.String(),
 			confidence:     map[bool]string{true: "High", false: "Low"}[d.HighConfidence],
 			format:         d.Format.String(),
@@ -129,9 +140,9 @@ func main() {
 	})
 
 	if *debugFlag {
-		tbl := table.New("FILEPATH", "REDLINES", "INSERTIONS", "DELETIONS", "STATUS", "CONF", "FORMAT")
+		tbl := table.New("FILEPATH", "REDLINES", "INSERTIONS", "DELETIONS", "COMMENTS", "STATUS", "CONF", "FORMAT")
 		for _, r := range rows {
-			tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, r.status, r.confidence, r.format)
+			tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, r.comments, r.status, r.confidence, r.format)
 		}
 		tbl.Print()
 	} else {
@@ -140,6 +151,21 @@ func main() {
 			tbl.AddRow(r.filePath, r.hasRedlines, r.format)
 		}
 		tbl.Print()
+	}
+
+	if *csvFlag != "" {
+		file, err := os.Create(*csvFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating CSV file: %v\n", err)
+			os.Exit(1)
+		}
+		defer file.Close()
+		fmt.Fprintln(file, "filepath,redlines,insertions,deletions,comments,status,conf,format")
+		for _, r := range rows {
+			fmt.Fprintf(file, "%s,%v,%d,%d,%s,%s,%s,%s\n",
+				r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount,
+				r.comments, r.status, r.confidence, r.format)
+		}
 	}
 
 	if redlinesFound > 0 {
