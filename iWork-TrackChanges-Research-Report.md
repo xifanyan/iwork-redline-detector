@@ -45,7 +45,7 @@ Protobuf stream = [ArchiveInfo (metadata)] → [MessageInfo × N] → [Payload �
 
 ### Older iWork '09 (Pre-2013, XML-based)
 
-iWork '09 used **raw XML** inside ZIP bundles — `index.xml.gz`. The complete schema was never made public by Apple. Detection would require Apple-specific XML namespace inspection.
+iWork '09 used **raw XML** inside ZIP bundles — `index.xml` or `index.xml.gz`. The complete schema was never made public by Apple, but the legacy samples in this repository are structured enough to inspect Apple-specific XML namespaces directly.
 
 ---
 
@@ -260,7 +260,7 @@ hidden == true → Hidden change (visible in UI only when toggled)
 
 ### 4.6 Comments — Separate from Track Changes
 
-Comments don't require track changes to be enabled. They use different protobuf messages:
+Comments don't require track changes to be enabled. They use different protobuf messages, but the current implementation only needs them as a fallback redline signal when tracked insertions/deletions are absent:
 
 ```protobuf
 // In Document.iwa — TSWP.HighlightArchive (type 2013)
@@ -281,6 +281,46 @@ message CommentStorageArchive {
   optional .TSP.Reference author;               // → AnnotationAuthorStorage
 }
 ```
+
+#### Practical Finding From Fixtures
+
+The modern Pages fixtures in `testdata/pages/` show that comment-only documents can be detected from printable payload text inside decompressed `Document.iwa`, but this signal should be treated as a **fallback-only heuristic**:
+
+- `comments.no-tracking.pages` contains a comment-only payload string and no tracked insertions/deletions
+- `normal.pages` does not contain the same comment payload pattern
+- once insertion/deletion counts already indicate tracked changes, separate comment parsing is unnecessary for the redline decision
+
+That means the safest current rule is:
+
+```text
+if tracked insertions/deletions exist:
+    treat file as redlined from change records alone
+else:
+    look for comment-only signals
+```
+
+This reduces false positives from generic metadata strings containing the word `comment`.
+
+### 4.6.1 Legacy Pages '09 Comments
+
+Legacy Pages '09 comments are not stored in IWA archives. The repository samples show that `index.xml` contains a generic `<sf:comment>` node even in clean documents, so that tag is **not** a reliable comment signal on its own.
+
+What *does* distinguish comment-bearing legacy samples is the presence of `sf:annotation` blocks:
+
+- `testdata/pages09/comments.no-tracking.pages` → contains `<sf:annotation ...>`
+- `testdata/pages09/comments.track.pages` → contains `<sf:annotation ...>`
+- `testdata/pages09/normal.pages` → no `<sf:annotation ...>` block
+
+Practical legacy rule:
+
+```text
+if insertion_count == 0 and deletion_count == 0:
+    count <sf:annotation> elements as comments
+else:
+    skip legacy comment parsing
+```
+
+This matches the intended business rule: comments count as redlines only for comment-only documents, while tracked-change documents are already redlined by insertion/deletion evidence.
 
 ### 4.7 Author Information
 
@@ -335,8 +375,8 @@ The detector reports confidence based on detection method:
 
 | Confidence | Method | Source |
 |---|---|---|
-| **High** | Direct field scan | Reading settings fields from decompressed `Document.iwa` / `ViewState*.iwa` |
-| **Low** | Heuristic | Byte-pattern counting, may have false positives |
+| **High** | Direct field scan | Reading settings fields from decompressed `Document.iwa` / `ViewState*.iwa` or legacy XML attributes |
+| **Low** | Heuristic | Byte-pattern counting or fallback comment payload matching |
 
 #### Limitations of Heuristic Detection
 
@@ -344,6 +384,7 @@ The detector reports confidence based on detection method:
 - **No Author Info**: Byte patterns don't reveal who made changes
 - **No Timestamps**: Cannot determine when changes were made
 - **Mode Detection Depends on Known Fields**: If field locations change in future Pages versions, high-confidence status may regress to heuristic mode
+- **Comment Heuristics Should Stay Narrow**: generic metadata strings containing `comment` are too broad; use fallback comment parsing only when there are no tracked changes
 
 ---
 
@@ -377,8 +418,11 @@ Open .pages file
               │           ├── kind=2 → Deletion (strikethrough)
               │           └── session → Author + date via ChangeSessionArchive
               │
-              ├── Find TSWP.HighlightArchive / TSWP.CommentInfoArchive
-              │     └── YES → Comments exist (separate from track changes)
+               ├── No tracked insertions/deletions?
+               │     ├── YES → inspect comment-only signals
+               │     │     ├── Modern: printable comment payloads in Document.iwa
+               │     │     └── Legacy: <sf:annotation> elements in index.xml
+               │     └── NO  → skip comment parsing (tracked changes already explain redline)
               │
               └── Find AnnotationAuthorStorage.iwa
                     └── TSK.AnnotationAuthorStorageArchive
@@ -387,14 +431,15 @@ Open .pages file
 
 #### Hybrid Detection Logic
 
-| Enabled | Paused | Change Detected | Final Status | Confidence |
-|---|---|---|---|---|
-| No | No | No | Disabled | High |
-| Yes | No | No | Enabled (No Changes) | High |
-| Yes | No | Yes | Enabled (With Changes) | High |
-| Yes | Yes | No/Yes | Paused | High |
-| Unknown | Unknown | Yes | Enabled (With Changes) | Low |
-| Unknown | Unknown | No | Disabled | Low |
+| Enabled | Paused | Change Detected | Comment-Only Detected | Final Status | Confidence |
+|---|---|---|---|---|---|
+| No | No | No | No | Disabled | High |
+| Yes | No | No | No | Enabled (No Changes) | High |
+| Yes | No | Yes | Skipped | Enabled (With Changes) | High |
+| Yes | Yes | No/Yes | Skipped/No | Paused | High |
+| Unknown | Unknown | Yes | Skipped | Enabled (With Changes) | Low |
+| Unknown | Unknown | No | Yes | Disabled + comment-only redline | Low/Medium |
+| Unknown | Unknown | No | No | Disabled | Low |
 
 ---
 
@@ -410,7 +455,8 @@ Open .pages file
 | **Deletion count?** | `Document.iwa` → count `kChangeKindDeletion` entries | Scan ChangeArchive records |
 | **Change author?** | `ChangeArchive.session` → `ChangeSessionArchive` | Author reference + date |
 | **Hidden changes?** | `Document.iwa` → `ChangeArchive.hidden = true` entries | Hidden but present |
-| **Comments exist?** | `Document.iwa` → `TSWP.HighlightArchive` / `CommentInfoArchive` | Present |
+| **Comments exist? (modern)** | `Document.iwa` fallback payload scan | Only when no tracked changes exist |
+| **Comments exist? (legacy)** | `index.xml` → `sf:annotation` | Only when no tracked changes exist |
 | **Comment authors?** | `AnnotationAuthorStorage.iwa` → `AnnotationAuthorStorageArchive` | Name + color per author |
 | **Markup visible?** | `Document.iwa` → `TP.SettingsArchive` | `show_ct_markup`, `change_bars_visible`, etc. |
 | **Heuristic detection?** | Decompressed bytes | Scan for `0x08 0x01 0x12` (insertion) and `0x08 0x02 0x12` (deletion) |
@@ -541,7 +587,9 @@ obriensp/iWorkFileFormat/iWorkFileInspector/
 - [x] Check `ViewState*.iwa` (UIStateArchive) field `28` for paused state
 - [x] Scan decompressed bytes for insertion/deletion change markers (heuristic)
 - [ ] Parse `TSWP.ChangeArchive` records for author/date (struct ready, parser not fully implemented)
-- [x] Check `TSWP.HighlightArchive` for comments
+- [x] Detect comment-only modern Pages redlines from observed `Document.iwa` payload patterns
+- [x] Detect comment-only legacy Pages '09 redlines from `sf:annotation` elements in `index.xml`
+- [x] Skip comment parsing when tracked insertions/deletions already exist
 - [x] Parse `AnnotationAuthorStorage.iwa` for author list
 - [x] Report markup visibility settings from `TP.SettingsArchive`
 - [ ] Handle hidden changes (`hidden=true`)

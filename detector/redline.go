@@ -129,8 +129,10 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 		result.TrackChangesStatus = TCStatusDisabled
 	}
 
-	result.CommentCount = detectCommentsInData(decompressed)
-	result.HasComments = result.CommentCount > 0
+	if !result.TrackedChangesPresent {
+		result.CommentCount = detectCommentsInData(decompressed)
+		result.HasComments = result.CommentCount > 0
+	}
 
 	iwaFile, err := iwa.ParseIWAFile(docData)
 	protobufParsed := err == nil
@@ -244,8 +246,7 @@ func detectCommentsInData(data []byte) int {
 			return
 		}
 		text := string(data[start:end])
-		lower := strings.ToLower(text)
-		if !strings.Contains(lower, "comment") {
+		if !looksLikeCommentContent(text) {
 			start = -1
 			return
 		}
@@ -272,30 +273,35 @@ func detectCommentsInData(data []byte) int {
 	return count
 }
 
-func looksLikeASCIIText(data []byte) bool {
-	if len(data) < 4 {
-		return false
-	}
-	for _, b := range data {
-		if b == 0 {
-			return false
-		}
-		if b < 0x20 || b > 0x7e {
-			if b != '\n' && b != '\r' && b != '\t' {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 func isPrintableASCII(b byte) bool {
 	return (b >= 0x20 && b <= 0x7e) || b == '\n' || b == '\r' || b == '\t'
 }
 
-func containsCommentKeyword(data []byte) bool {
-	lower := strings.ToLower(string(data))
-	return strings.Contains(lower, "comment")
+func looksLikeCommentContent(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if !strings.Contains(lower, "comment") {
+		return false
+	}
+
+	commentIdx := strings.Index(lower, "comment")
+	if commentIdx <= 0 {
+		return false
+	}
+
+	prefix := lower[:commentIdx]
+	for _, marker := range []string{")comment", " comments*", " comment with", " comment:", "comment with"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	for i := 0; i < len(prefix); i++ {
+		if prefix[i] < 0x20 {
+			return true
+		}
+	}
+
+	return strings.Count(lower, "\n") >= 2
 }
 
 func extractDocumentIWA(pagesPath string) ([]byte, error) {
@@ -452,13 +458,17 @@ func detectRedlinesLegacyXML(pagesPath string, result *RedlineDetection) (*Redli
 		return nil, fmt.Errorf("no index.xml or index.xml.gz found in archive")
 	}
 
-	insertionCount, deletionCount, trackingEnabled, trackingPaused, highConfidence, err := parseLegacyIndexXML(indexData)
+	insertionCount, deletionCount, commentCount, trackingEnabled, trackingPaused, highConfidence, err := parseLegacyIndexXML(indexData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse legacy index.xml: %w", err)
 	}
 
 	result.InsertionCount = insertionCount
 	result.DeletionCount = deletionCount
+	if insertionCount == 0 && deletionCount == 0 {
+		result.CommentCount = commentCount
+		result.HasComments = commentCount > 0
+	}
 	result.SettingEnabled = trackingEnabled
 	result.SettingPaused = trackingPaused
 	result.HighConfidence = highConfidence
@@ -504,7 +514,7 @@ func decompressGzip(data []byte) ([]byte, error) {
 	return io.ReadAll(r)
 }
 
-func parseLegacyIndexXML(data []byte) (insertions, deletions int, enabled, paused, highConfidence bool, err error) {
+func parseLegacyIndexXML(data []byte) (insertions, deletions, comments int, enabled, paused, highConfidence bool, err error) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	hasAggregateCounts := false
 	for {
@@ -513,7 +523,7 @@ func parseLegacyIndexXML(data []byte) (insertions, deletions int, enabled, pause
 			if err == io.EOF {
 				break
 			}
-			return 0, 0, false, false, false, err
+			return 0, 0, 0, false, false, false, err
 		}
 
 		switch se := token.(type) {
@@ -562,9 +572,12 @@ func parseLegacyIndexXML(data []byte) (insertions, deletions int, enabled, pause
 					deletions++
 				}
 			}
+			if localName(se, "annotation") {
+				comments++
+			}
 		}
 	}
-	return insertions, deletions, enabled, paused, highConfidence, nil
+	return insertions, deletions, comments, enabled, paused, highConfidence, nil
 }
 
 func localName(se xml.StartElement, name string) bool {

@@ -57,6 +57,25 @@ func TestParseMessage_NonMessageBytesDoNotParseAsNestedMessage(t *testing.T) {
 	}
 }
 
+func TestParseMessageData_PreservesFieldsWhenTypedParserFails(t *testing.T) {
+	data := []byte{
+		0x08, 0x01,
+		0x1b,
+		0x08, 0x02,
+		0x1c,
+		0x12, 0x01, 0x03,
+	}
+
+	parsed := ParseMessageData(data)
+
+	if got := parsed.Fields[1]; len(got) != 1 || got[0] != 0x01 {
+		t.Fatalf("Fields[1] = %v, want [1]", got)
+	}
+	if got := parsed.Fields[2]; len(got) != 1 || got[0] != 0x03 {
+		t.Fatalf("Fields[2] = %v, want [3]", got)
+	}
+}
+
 func TestExtractDocumentIWA(t *testing.T) {
 	testdataDir := filepath.Join("..", "testdata", "pages")
 

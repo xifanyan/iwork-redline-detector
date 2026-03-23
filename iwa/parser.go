@@ -445,17 +445,47 @@ func ParseMessageData(data []byte) *ParsedMessage {
 		Data:   data,
 		Fields: make(map[uint64][]byte),
 	}
+	r := bytes.NewReader(data)
 
-	msg, err := ParseMessage(data)
-	if err != nil {
-		return legacy
-	}
-
-	for fieldNum, fields := range msg.Fields {
-		if len(fields) == 0 {
-			continue
+	for r.Len() > 0 {
+		fieldNum, err := ReadVarint(r)
+		if err != nil {
+			break
 		}
-		legacy.Fields[fieldNum] = fields[len(fields)-1].Raw
+		wireType := fieldNum & 0x07
+		fieldNum = fieldNum >> 3
+
+		switch wireType {
+		case 0:
+			val, err := ReadVarint(r)
+			if err != nil {
+				return legacy
+			}
+			legacy.Fields[fieldNum] = encodeVarint(val)
+		case 2:
+			dataLen, err := ReadVarint(r)
+			if err != nil {
+				return legacy
+			}
+			if dataLen > uint64(r.Len()) {
+				return legacy
+			}
+			fieldData := make([]byte, dataLen)
+			if _, err := io.ReadFull(r, fieldData); err != nil {
+				return legacy
+			}
+			legacy.Fields[fieldNum] = fieldData
+		case 5:
+			fieldData := make([]byte, 4)
+			if _, err := io.ReadFull(r, fieldData); err != nil {
+				return legacy
+			}
+			legacy.Fields[fieldNum] = fieldData
+		default:
+			if err := SkipWireType(r, wireType); err != nil {
+				return legacy
+			}
+		}
 	}
 
 	return legacy

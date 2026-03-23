@@ -41,6 +41,7 @@ Go-based tool to detect track changes and redlines in Apple iWork documents (.pa
 - Track Changes feature enabled/disabled status
 - Tracked insertions and deletions
 - Track Changes paused state
+- Comment-only redlines in modern Pages and legacy Pages '09 files
 - Markup visibility settings
 
 ## Research
@@ -48,6 +49,7 @@ Go-based tool to detect track changes and redlines in Apple iWork documents (.pa
 This project was built based on detailed research of the iWork file format. See [[iWork-TrackChanges-Research-Report]] for the complete technical analysis including:
 - IWA file format structure (Snappy + Protocol Buffers)
 - Track changes protobuf message types
+- Modern and legacy comment detection findings
 - ChangeArchive detection rules
 - Legal considerations for redline workflows
 
@@ -90,10 +92,21 @@ For iWork '09 files, the detector parses `index.xml` directly:
 - **`sl:change-tracking`**: reads `enabled` and `suspended` attributes for tracking state
 - **`sf:text-changes`**: reads aggregate `insertion-count` and `deletion-count` attributes when present
 - **`sf:changed` / `sf:change`**: counts individual change elements by `kind` attribute ("insertion" or "deletion")
+- **`sf:annotation`**: counts annotation blocks as legacy comments when no tracked insertions/deletions are present
 
 Priority: aggregate counts from `sf:text-changes` are used when available; otherwise individual change elements are counted. Malformed XML returns an error rather than silently producing incorrect results.
 
-#### 3. Change Detection (Heuristic)
+#### 3. Comment Detection (Fallback Redlines)
+
+Comments are treated as redlines only when tracked insertions/deletions are absent.
+
+- **Modern Pages**: detect comment-like payload text from decompressed `Document.iwa`
+- **Legacy Pages '09**: count `sf:annotation` elements in `index.xml`
+- **Skip comment parsing when tracked changes already exist**: insertion/deletion evidence already explains the redline result
+
+This keeps comment detection focused on comment-only redline cases and avoids double-counting documents that already contain tracked edits.
+
+#### 4. Change Detection (Heuristic)
 
 The detector also scans for actual tracked changes using byte-pattern detection:
 
@@ -104,7 +117,7 @@ Normal documents have ~20 insertion patterns from character styling, so we use t
 - **Insertions > 21** → actual track changes detected
 - **Deletions > 1** → actual track changes detected
 
-#### 4. Combined Status
+#### 5. Combined Status
 
 The detector combines both signals to determine the final status:
 
@@ -149,7 +162,14 @@ Scan decompressed data for ChangeArchive patterns:
 - **Kind 2**: Deletions (strikethrough text)
 
 **5. Determine Status**
-Combine settings and counts to produce the final result.
+Combine settings and counts to produce the final track-changes status.
+
+**6. Apply Redline Fallback**
+If there are no tracked insertions/deletions, check for comments:
+- Modern: comment-like payloads in `Document.iwa`
+- Legacy: `sf:annotation` elements in `index.xml`
+
+Overall `REDLINES=true` when either tracked changes exist or comment-only redlines are found.
 
 **2. Compression**
 The `Document.iwa` file is compressed using Google's Snappy algorithm. We decompress it to read the raw data.
@@ -243,6 +263,8 @@ The detector combines **direct settings field reads** with **heuristic change co
 - If settings fields are found → use them as the primary source of truth
 - If settings fields are unavailable → fall back to heuristic change detection
 - Set `HighConfidence` when the current mode comes from document/view-state settings
+- Only run comment detection when tracked insertions/deletions are absent
+- Treat comment-only documents as redlines without changing the track-changes status label
 
 **Track Changes Status Values:**
 
@@ -269,7 +291,7 @@ type RedlineDetection struct {
     Changes []Change                     // Individual change records (future enhancement)
 
     HasComments  bool                   // Comments detected separately
-    CommentCount int
+    CommentCount int                    // Counted only when no tracked insertions/deletions exist
 
     MarkupSettings MarkupSettings          // Visibility settings
     Authors []Author                    // Detected authors
@@ -303,6 +325,7 @@ FILEPATH                        REDLINES  FORMAT
 normal.track.accepted.pages     false     Modern  
 normal.pages                    false     Modern  
 blank.track.pages               false     Modern  
+comments.no-tracking.pages      true      Modern  
 track.not-accepted.pages        true      Modern  
 deletion.track-paused.pages     true      Modern  
 tracking.insert.deletion.pages  true      Modern  
@@ -310,23 +333,21 @@ tracking.insert.deletion.pages  true      Modern
 
 **Debug mode** (aligned table, all columns):
 ```
-FILEPATH                        REDLINES  INSERTIONS  DELETIONS  COMMENTS  STATUS                  CONF  FORMAT  
-normal.pages                    false     20          1                    Disabled                High  Modern  
-normal.track.accepted.pages     false     21          1                    Enabled (No Changes)    High  Modern  
-blank.track.pages               false     20          1                    Enabled (No Changes)    High  Modern  
-track.not-accepted.pages        true      22          1                    Enabled (With Changes)  High  Modern  
-deletion.track-paused.pages     true      21          2                    Paused                  High  Modern  
-tracking.insert.deletion.pages   true      22          3                    Enabled (With Changes)  High  Modern  
-pages09/normal.pages            false     0           0                    Disabled                High  Pages '09  
-pages09/deletion.track-paused.pages  true   0           1                    Paused                  High  Pages '09  
+FILEPATH                        REDLINES  INSERTIONS  DELETIONS  COMMENTS      SOURCE    STATUS                  CONF  FORMAT     
+normal.pages                    false     20          1                                 Disabled                High  Modern     
+comments.no-tracking.pages      true      20          1          Comments (1)  Comments  Paused                  High  Modern     
+track.not-accepted.pages        true      22          1                       Tracked Changes  Enabled (With Changes)  High  Modern     
+pages09/normal.pages            false     0           0                                 Disabled                High  Pages '09  
+pages09/comments.no-tracking.pages  true  0           0          Comments (1)  Comments  Paused                  High  Pages '09  
 ```
 
 **CSV output** (when `-csv <filename>` is specified):
 ```csv
-filepath,redlines,insertions,deletions,comments,status,conf,format
-normal.pages,false,20,1,,Disabled,High,Modern
-track.not-accepted.pages,true,22,1,,Enabled (With Changes),High,Modern
-document.with.comments.pages,true,22,3,Enabled,Enabled (With Changes),High,Modern
+filepath,redlines,insertions,deletions,comments,source,status,conf,format
+normal.pages,false,20,1,,,Disabled,High,Modern
+comments.no-tracking.pages,true,20,1,Comments (1),Comments,Paused,High,Modern
+track.not-accepted.pages,true,22,1,,Tracked Changes,Enabled (With Changes),High,Modern
+pages09/comments.no-tracking.pages,true,0,0,Comments (1),Comments,Paused,High,Pages '09
 ```
 
 ### Detection Confidence
@@ -344,25 +365,31 @@ When settings fields cannot be found, the detector falls back to heuristic detec
 
 ### Modern Format (testdata/pages/)
 
-| File | Insertions | Deletions | Redlines | Status | Format |
-|------|------------|-----------|----------|---------|--------|
-| normal.pages | 20 | 1 | false | Disabled | Modern |
-| blank.track.pages | 20 | 1 | false | Enabled (No Changes) | Modern |
-| normal.track.accepted.pages | 21 | 1 | false | Enabled (No Changes) | Modern |
-| track.not-accepted.pages | 22 | 1 | true | Enabled (With Changes) | Modern |
-| deletion.track-paused.pages | 21 | 2 | true | Paused | Modern |
-| tracking.insert.deletion.pages | 22 | 3 | true | Enabled (With Changes) | Modern |
+| File | Insertions | Deletions | Comments | Redlines | Status | Format |
+|------|------------|-----------|----------|----------|---------|--------|
+| normal.pages | 20 | 1 | 0 | false | Disabled | Modern |
+| comments.no-tracking.pages | 20 | 1 | 1 | true | Paused | Modern |
+| comments.track.pages | 22 | 1 | 0* | true | Enabled (With Changes) | Modern |
+| blank.track.pages | 20 | 1 | 0 | false | Enabled (No Changes) | Modern |
+| normal.track.accepted.pages | 21 | 1 | 0 | false | Enabled (No Changes) | Modern |
+| track.not-accepted.pages | 22 | 1 | 0 | true | Enabled (With Changes) | Modern |
+| deletion.track-paused.pages | 21 | 2 | 0 | true | Paused | Modern |
+| tracking.insert.deletion.pages | 22 | 3 | 0 | true | Enabled (With Changes) | Modern |
 
 ### Legacy iWork '09 Format (testdata/pages09/)
 
-| File | Insertions | Deletions | Redlines | Status | Format |
-|------|------------|-----------|----------|---------|--------|
-| normal.pages | 0 | 0 | false | Disabled | Pages '09 |
-| blank.track.pages | 0 | 0 | false | Enabled (No Changes) | Pages '09 |
-| normal.track.accepted.pages | 0 | 0 | false | Enabled (No Changes) | Pages '09 |
-| track.not-accepted.pages | 1 | 0 | true | Enabled (With Changes) | Pages '09 |
-| deletion.track-paused.pages | 0 | 1 | true | Paused | Pages '09 |
-| tracking.insert.deletion.pages | 1 | 2 | true | Enabled (With Changes) | Pages '09 |
+| File | Insertions | Deletions | Comments | Redlines | Status | Format |
+|------|------------|-----------|----------|----------|---------|--------|
+| normal.pages | 0 | 0 | 0 | false | Disabled | Pages '09 |
+| comments.no-tracking.pages | 0 | 0 | 1 | true | Paused | Pages '09 |
+| comments.track.pages | 1 | 0 | 0* | true | Enabled (With Changes) | Pages '09 |
+| blank.track.pages | 0 | 0 | 0 | false | Enabled (No Changes) | Pages '09 |
+| normal.track.accepted.pages | 0 | 0 | 0 | false | Enabled (No Changes) | Pages '09 |
+| track.not-accepted.pages | 1 | 0 | 0 | true | Enabled (With Changes) | Pages '09 |
+| deletion.track-paused.pages | 0 | 1 | 0 | true | Paused | Pages '09 |
+| tracking.insert.deletion.pages | 1 | 2 | 0 | true | Enabled (With Changes) | Pages '09 |
+
+`*` Comment detection is intentionally skipped once tracked insertions/deletions already explain the redline result.
 
 ## Technical Notes
 
@@ -379,7 +406,8 @@ When settings fields cannot be found, the detector falls back to heuristic detec
 - **ArchiveInfo parsing**: Full typed-message traversal in `iwa/parser.go` is still incomplete for some IWA structures, so detailed message extraction remains limited.
 - **Heuristic threshold**: Modern format change detection uses insertion/deletion byte-pattern thresholds and may produce false positives on documents with unusual styling density.
 - **Legacy XML**: Heuristic scanning is not applied to iWork '09 files; change counts come from XML parsing only.
-- **Comments detection**: Only available for modern IWA format; legacy iWork '09 format does not support comments detection.
+- **Comments detection**: Comment-only redlines are supported for both modern Pages and legacy Pages '09, but comment parsing only runs when no tracked insertions/deletions are present.
+- **Modern comments**: Current modern comment detection is based on observed payload text patterns in `Document.iwa`, not full typed comment-archive traversal yet.
 - **Change records**: Individual change author/timestamp parsing not yet fully implemented
 - **Legal-grade detection**: For highest confidence, compare against a known-clean baseline document
 

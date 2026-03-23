@@ -304,6 +304,78 @@ func TestDetectRedlines_Legacy(t *testing.T) {
 	}
 }
 
+func TestDetectRedlines_LegacyCommentsAffectRedlineDecision(t *testing.T) {
+	testdataDir := filepath.Join("..", "testdata", "pages09")
+
+	tests := []struct {
+		name               string
+		filename           string
+		wantStatus         TrackChangesStatus
+		wantTrackedChanges bool
+		wantHasComments    bool
+		wantRedline        bool
+	}{
+		{
+			name:               "legacy comments without tracking still redline",
+			filename:           "comments.no-tracking.pages",
+			wantStatus:         TCStatusPaused,
+			wantTrackedChanges: false,
+			wantHasComments:    true,
+			wantRedline:        true,
+		},
+		{
+			name:               "legacy comments with tracking are redline",
+			filename:           "comments.track.pages",
+			wantStatus:         TCStatusEnabledWithChanges,
+			wantTrackedChanges: true,
+			wantHasComments:    false,
+			wantRedline:        true,
+		},
+		{
+			name:               "legacy normal document has no comments",
+			filename:           "normal.pages",
+			wantStatus:         TCStatusDisabled,
+			wantTrackedChanges: false,
+			wantHasComments:    false,
+			wantRedline:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pagesPath := filepath.Join(testdataDir, tt.filename)
+
+			result, err := DetectRedlines(pagesPath)
+			if err != nil {
+				t.Fatalf("DetectRedlines returned error: %v", err)
+			}
+
+			if result.TrackChangesStatus != tt.wantStatus {
+				t.Fatalf("TrackChangesStatus = %v, want %v", result.TrackChangesStatus, tt.wantStatus)
+			}
+
+			if result.TrackedChangesPresent != tt.wantTrackedChanges {
+				t.Fatalf("TrackedChangesPresent = %v, want %v", result.TrackedChangesPresent, tt.wantTrackedChanges)
+			}
+
+			if result.HasComments != tt.wantHasComments {
+				t.Fatalf("HasComments = %v, want %v", result.HasComments, tt.wantHasComments)
+			}
+
+			if tt.wantHasComments && result.CommentCount < 1 {
+				t.Fatalf("CommentCount = %d, want >= 1", result.CommentCount)
+			}
+			if !tt.wantHasComments && result.CommentCount != 0 {
+				t.Fatalf("CommentCount = %d, want 0", result.CommentCount)
+			}
+
+			if got := result.HasRedlines(); got != tt.wantRedline {
+				t.Fatalf("HasRedlines() = %v, want %v", got, tt.wantRedline)
+			}
+		})
+	}
+}
+
 func TestDetectRedlines_CommentsAffectRedlineDecision(t *testing.T) {
 	testdataDir := filepath.Join("..", "testdata", "pages")
 
@@ -328,7 +400,7 @@ func TestDetectRedlines_CommentsAffectRedlineDecision(t *testing.T) {
 			filename:           "comments.track.pages",
 			wantStatus:         TCStatusEnabledWithChanges,
 			wantTrackedChanges: true,
-			wantHasComments:    true,
+			wantHasComments:    false,
 			wantRedline:        true,
 		},
 		{
@@ -397,6 +469,20 @@ func TestCLI_DebugOutputShowsCommentOnlyReason(t *testing.T) {
 	}
 	if !bytes.Contains(output, []byte("Paused")) {
 		t.Fatalf("output missing paused tracking status: %s", output)
+	}
+}
+
+func TestDetectCommentsInData_IgnoresSchemaWordWithoutCommentMarker(t *testing.T) {
+	data := []byte("metadata Comment stylesheet label only")
+	if got := detectCommentsInData(data); got != 0 {
+		t.Fatalf("detectCommentsInData(schema text) = %d, want 0", got)
+	}
+}
+
+func TestDetectCommentsInData_CountsPrintableCommentSegmentsWithMarkers(t *testing.T) {
+	data := []byte("prefix\x00)Comment with Tracking enabled\n\n\nBody\x00suffix")
+	if got := detectCommentsInData(data); got != 1 {
+		t.Fatalf("detectCommentsInData(comment payload) = %d, want 1", got)
 	}
 }
 
@@ -511,7 +597,7 @@ func TestCountPattern(t *testing.T) {
 }
 
 func TestParseLegacyIndexXML_Malformed(t *testing.T) {
-	_, _, _, _, _, err := parseLegacyIndexXML([]byte("<sl:document><broken>"))
+	_, _, _, _, _, _, err := parseLegacyIndexXML([]byte("<sl:document><broken>"))
 	if err == nil {
 		t.Fatal("parseLegacyIndexXML expected error for malformed XML")
 	}
