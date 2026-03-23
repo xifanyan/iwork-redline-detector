@@ -129,10 +129,8 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 		result.TrackChangesStatus = TCStatusDisabled
 	}
 
-	if !result.TrackedChangesPresent {
-		result.CommentCount = detectCommentsInData(decompressed)
-		result.HasComments = result.CommentCount > 0
-	}
+	result.CommentCount = detectCommentsInData(decompressed)
+	result.HasComments = result.CommentCount > 0
 
 	iwaFile, err := iwa.ParseIWAFile(docData)
 	protobufParsed := err == nil
@@ -465,10 +463,8 @@ func detectRedlinesLegacyXML(pagesPath string, result *RedlineDetection) (*Redli
 
 	result.InsertionCount = insertionCount
 	result.DeletionCount = deletionCount
-	if insertionCount == 0 && deletionCount == 0 {
-		result.CommentCount = commentCount
-		result.HasComments = commentCount > 0
-	}
+	result.CommentCount = commentCount
+	result.HasComments = commentCount > 0
 	result.SettingEnabled = trackingEnabled
 	result.SettingPaused = trackingPaused
 	result.HighConfidence = highConfidence

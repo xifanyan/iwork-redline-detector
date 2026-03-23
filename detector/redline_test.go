@@ -328,7 +328,7 @@ func TestDetectRedlines_LegacyCommentsAffectRedlineDecision(t *testing.T) {
 			filename:           "comments.track.pages",
 			wantStatus:         TCStatusEnabledWithChanges,
 			wantTrackedChanges: true,
-			wantHasComments:    false,
+			wantHasComments:    true,
 			wantRedline:        true,
 		},
 		{
@@ -400,7 +400,7 @@ func TestDetectRedlines_CommentsAffectRedlineDecision(t *testing.T) {
 			filename:           "comments.track.pages",
 			wantStatus:         TCStatusEnabledWithChanges,
 			wantTrackedChanges: true,
-			wantHasComments:    false,
+			wantHasComments:    true,
 			wantRedline:        true,
 		},
 		{
@@ -454,8 +454,8 @@ func TestCLI_DebugOutputShowsCommentOnlyReason(t *testing.T) {
 	cmd.Dir = filepath.Join("..", "detector")
 
 	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatal("expected non-zero exit from comment redline sample")
+	if err != nil {
+		t.Fatalf("expected zero exit from comment redline sample, got error: %v\n%s", err, output)
 	}
 
 	if !bytes.Contains(output, []byte("comments.no-tracking.pages")) {

@@ -102,8 +102,6 @@ func main() {
 	}
 
 	var rows []row
-	redlinesFound := 0
-
 	for res := range results {
 		if res.err != nil {
 			fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", res.file, res.err)
@@ -112,9 +110,6 @@ func main() {
 
 		d := res.detection
 		hasRedlines := d.HasRedlines()
-		if hasRedlines {
-			redlinesFound++
-		}
 
 		comments := ""
 		if d.HasComments {
@@ -177,9 +172,6 @@ func main() {
 		}
 	}
 
-	if redlinesFound > 0 {
-		os.Exit(1)
-	}
 }
 
 func findPagesFiles(dir string) ([]string, error) {
