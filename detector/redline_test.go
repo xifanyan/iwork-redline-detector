@@ -2,7 +2,9 @@ package detector
 
 import (
 	"archive/zip"
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -160,12 +162,11 @@ func TestDetectRedlines_FileNotFound(t *testing.T) {
 }
 
 func TestDetectRedlines_InvalidPages(t *testing.T) {
-	tmpFile := "/tmp/invalid.pages"
+	tmpFile := filepath.Join(t.TempDir(), "invalid.pages")
 	err := os.WriteFile(tmpFile, []byte("not a zip file"), 0644)
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile)
 
 	_, err = DetectRedlines(tmpFile)
 	if err == nil {
@@ -300,6 +301,102 @@ func TestDetectRedlines_Legacy(t *testing.T) {
 				t.Errorf("DetectRedlines(%s) DeletionCount = %d, want %d", tt.name, result.DeletionCount, tt.wantDeletions)
 			}
 		})
+	}
+}
+
+func TestDetectRedlines_CommentsAffectRedlineDecision(t *testing.T) {
+	testdataDir := filepath.Join("..", "testdata", "pages")
+
+	tests := []struct {
+		name               string
+		filename           string
+		wantStatus         TrackChangesStatus
+		wantTrackedChanges bool
+		wantHasComments    bool
+		wantRedline        bool
+	}{
+		{
+			name:               "comments without tracking still redline",
+			filename:           "comments.no-tracking.pages",
+			wantStatus:         TCStatusPaused,
+			wantTrackedChanges: false,
+			wantHasComments:    true,
+			wantRedline:        true,
+		},
+		{
+			name:               "comments with tracking are redline",
+			filename:           "comments.track.pages",
+			wantStatus:         TCStatusEnabledWithChanges,
+			wantTrackedChanges: true,
+			wantHasComments:    true,
+			wantRedline:        true,
+		},
+		{
+			name:               "normal document has no comments",
+			filename:           "normal.pages",
+			wantStatus:         TCStatusDisabled,
+			wantTrackedChanges: false,
+			wantHasComments:    false,
+			wantRedline:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pagesPath := filepath.Join(testdataDir, tt.filename)
+
+			result, err := DetectRedlines(pagesPath)
+			if err != nil {
+				t.Fatalf("DetectRedlines returned error: %v", err)
+			}
+
+			if result.TrackChangesStatus != tt.wantStatus {
+				t.Fatalf("TrackChangesStatus = %v, want %v", result.TrackChangesStatus, tt.wantStatus)
+			}
+
+			if result.TrackedChangesPresent != tt.wantTrackedChanges {
+				t.Fatalf("TrackedChangesPresent = %v, want %v", result.TrackedChangesPresent, tt.wantTrackedChanges)
+			}
+
+			if result.HasComments != tt.wantHasComments {
+				t.Fatalf("HasComments = %v, want %v", result.HasComments, tt.wantHasComments)
+			}
+
+			if tt.wantHasComments && result.CommentCount < 1 {
+				t.Fatalf("CommentCount = %d, want >= 1", result.CommentCount)
+			}
+			if !tt.wantHasComments && result.CommentCount != 0 {
+				t.Fatalf("CommentCount = %d, want 0", result.CommentCount)
+			}
+
+			if got := result.HasRedlines(); got != tt.wantRedline {
+				t.Fatalf("HasRedlines() = %v, want %v", got, tt.wantRedline)
+			}
+		})
+	}
+}
+
+func TestCLI_DebugOutputShowsCommentOnlyReason(t *testing.T) {
+	pagesPath := filepath.Join("..", "testdata", "pages", "comments.no-tracking.pages")
+	cmd := exec.Command("go", "run", "../main.go", "-debug", pagesPath)
+	cmd.Dir = filepath.Join("..", "detector")
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected non-zero exit from comment redline sample")
+	}
+
+	if !bytes.Contains(output, []byte("comments.no-tracking.pages")) {
+		t.Fatalf("output missing filename: %s", output)
+	}
+	if !bytes.Contains(output, []byte("true")) {
+		t.Fatalf("output missing redline=true signal: %s", output)
+	}
+	if !bytes.Contains(output, []byte("Comments (")) {
+		t.Fatalf("output missing comment source indicator: %s", output)
+	}
+	if !bytes.Contains(output, []byte("Paused")) {
+		t.Fatalf("output missing paused tracking status: %s", output)
 	}
 }
 

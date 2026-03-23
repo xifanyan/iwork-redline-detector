@@ -5,6 +5,58 @@ import (
 	"testing"
 )
 
+func TestParseMessage_PreservesRepeatedAndNestedFields(t *testing.T) {
+	child := []byte{0x08, 0x2a}
+	data := []byte{
+		0x08, 0x01,
+		0x08, 0x02,
+		0x12, byte(len(child)),
+	}
+	data = append(data, child...)
+
+	msg, err := ParseMessage(data)
+	if err != nil {
+		t.Fatalf("ParseMessage returned error: %v", err)
+	}
+
+	field1 := msg.FieldsByNumber(1)
+	if len(field1) != 2 {
+		t.Fatalf("FieldsByNumber(1) len = %d, want 2", len(field1))
+	}
+
+	if val, ok := field1[0].AsVarint(); !ok || val != 1 {
+		t.Fatalf("first repeated field value = (%d, %v), want (1, true)", val, ok)
+	}
+	if val, ok := field1[1].AsVarint(); !ok || val != 2 {
+		t.Fatalf("second repeated field value = (%d, %v), want (2, true)", val, ok)
+	}
+
+	nested := msg.NestedMessages(2)
+	if len(nested) != 1 {
+		t.Fatalf("NestedMessages(2) len = %d, want 1", len(nested))
+	}
+
+	if val, ok := nested[0].FirstVarint(1); !ok || val != 42 {
+		t.Fatalf("nested FirstVarint(1) = (%d, %v), want (42, true)", val, ok)
+	}
+}
+
+func TestParseMessage_NonMessageBytesDoNotParseAsNestedMessage(t *testing.T) {
+	msg, err := ParseMessage([]byte{0x12, 0x03, 0xff, 0x00, 0x80})
+	if err != nil {
+		t.Fatalf("ParseMessage returned error: %v", err)
+	}
+
+	field, ok := msg.FirstField(2)
+	if !ok {
+		t.Fatal("FirstField(2) = false, want true")
+	}
+
+	if _, err := field.AsMessage(); err == nil {
+		t.Fatal("AsMessage expected error for opaque bytes")
+	}
+}
+
 func TestExtractDocumentIWA(t *testing.T) {
 	testdataDir := filepath.Join("..", "testdata", "pages")
 

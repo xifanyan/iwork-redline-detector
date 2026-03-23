@@ -129,13 +129,15 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 		result.TrackChangesStatus = TCStatusDisabled
 	}
 
+	result.CommentCount = detectCommentsInData(decompressed)
+	result.HasComments = result.CommentCount > 0
+
 	iwaFile, err := iwa.ParseIWAFile(docData)
 	protobufParsed := err == nil
 	if protobufParsed {
 		if settingsMsgs, ok := iwaFile.Messages[TypeSettingsArchive]; ok && len(settingsMsgs) > 0 {
 			parseMarkupSettings(settingsMsgs[0], &result.MarkupSettings)
 		}
-		result.HasComments = detectComments(iwaFile)
 	}
 
 	annotationData, err := extractAnnotationStorageIWA(pagesPath)
@@ -176,22 +178,51 @@ func encodeVarint(val uint64) []byte {
 }
 
 func parseMarkupSettings(data []byte, settings *MarkupSettings) {
-	msg := iwa.ParseMessageData(data)
+	msg, err := iwa.ParseMessage(data)
+	if err != nil {
+		legacy := iwa.ParseMessageData(data)
+		if val, ok := legacy.Fields[12]; ok && len(val) > 0 {
+			settings.ShowCTMarkup = decodeBool(val)
+		}
+		if val, ok := legacy.Fields[13]; ok && len(val) > 0 {
+			settings.ShowCTDeletions = decodeBool(val)
+		}
+		if val, ok := legacy.Fields[15]; ok && len(val) > 0 {
+			settings.ChangeBarsVisible = decodeBool(val)
+		}
+		if val, ok := legacy.Fields[16]; ok && len(val) > 0 {
+			settings.FormatChangesVisible = decodeBool(val)
+		}
+		if val, ok := legacy.Fields[17]; ok && len(val) > 0 {
+			settings.AnnotationsVisible = decodeBool(val)
+		}
+		return
+	}
 
-	if val, ok := msg.Fields[12]; ok && len(val) > 0 {
-		settings.ShowCTMarkup = decodeBool(val)
+	if field, ok := msg.FirstField(12); ok {
+		if val, ok := field.AsBool(); ok {
+			settings.ShowCTMarkup = val
+		}
 	}
-	if val, ok := msg.Fields[13]; ok && len(val) > 0 {
-		settings.ShowCTDeletions = decodeBool(val)
+	if field, ok := msg.FirstField(13); ok {
+		if val, ok := field.AsBool(); ok {
+			settings.ShowCTDeletions = val
+		}
 	}
-	if val, ok := msg.Fields[15]; ok && len(val) > 0 {
-		settings.ChangeBarsVisible = decodeBool(val)
+	if field, ok := msg.FirstField(15); ok {
+		if val, ok := field.AsBool(); ok {
+			settings.ChangeBarsVisible = val
+		}
 	}
-	if val, ok := msg.Fields[16]; ok && len(val) > 0 {
-		settings.FormatChangesVisible = decodeBool(val)
+	if field, ok := msg.FirstField(16); ok {
+		if val, ok := field.AsBool(); ok {
+			settings.FormatChangesVisible = val
+		}
 	}
-	if val, ok := msg.Fields[17]; ok && len(val) > 0 {
-		settings.AnnotationsVisible = decodeBool(val)
+	if field, ok := msg.FirstField(17); ok {
+		if val, ok := field.AsBool(); ok {
+			settings.AnnotationsVisible = val
+		}
 	}
 }
 
@@ -202,24 +233,69 @@ func decodeBool(data []byte) bool {
 	return data[0] != 0
 }
 
-func detectComments(iwaFile *iwa.IWAFile) bool {
-	if highlightMsgs, ok := iwaFile.Messages[TypeHighlight]; ok && len(highlightMsgs) > 0 {
-		for _, msg := range highlightMsgs {
-			parsed := iwa.ParseMessageData(msg)
-			if _, ok := parsed.Fields[1]; ok {
-				return true
+func detectCommentsInData(data []byte) int {
+	count := 0
+	seen := make(map[string]struct{})
+	start := -1
+
+	flush := func(end int) {
+		if start < 0 || end-start < 4 {
+			start = -1
+			return
+		}
+		text := string(data[start:end])
+		lower := strings.ToLower(text)
+		if !strings.Contains(lower, "comment") {
+			start = -1
+			return
+		}
+		if _, ok := seen[text]; ok {
+			start = -1
+			return
+		}
+		seen[text] = struct{}{}
+		count++
+		start = -1
+	}
+
+	for i, b := range data {
+		if isPrintableASCII(b) {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		flush(i)
+	}
+	flush(len(data))
+
+	return count
+}
+
+func looksLikeASCIIText(data []byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+	for _, b := range data {
+		if b == 0 {
+			return false
+		}
+		if b < 0x20 || b > 0x7e {
+			if b != '\n' && b != '\r' && b != '\t' {
+				return false
 			}
 		}
 	}
-	if commentMsgs, ok := iwaFile.Messages[TypeCommentInfo]; ok && len(commentMsgs) > 0 {
-		for _, msg := range commentMsgs {
-			parsed := iwa.ParseMessageData(msg)
-			if _, ok := parsed.Fields[2]; ok {
-				return true
-			}
-		}
-	}
-	return false
+	return true
+}
+
+func isPrintableASCII(b byte) bool {
+	return (b >= 0x20 && b <= 0x7e) || b == '\n' || b == '\r' || b == '\t'
+}
+
+func containsCommentKeyword(data []byte) bool {
+	lower := strings.ToLower(string(data))
+	return strings.Contains(lower, "comment")
 }
 
 func extractDocumentIWA(pagesPath string) ([]byte, error) {
@@ -506,4 +582,11 @@ func localNameAny(se xml.StartElement, names ...string) bool {
 
 func (r *RedlineDetection) HasTrackedChanges() bool {
 	return r.TrackedChangesPresent
+}
+
+func (r *RedlineDetection) HasRedlines() bool {
+	if r == nil {
+		return false
+	}
+	return (r.SettingEnabled && r.TrackedChangesPresent) || r.HasComments
 }

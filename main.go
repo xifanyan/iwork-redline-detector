@@ -95,6 +95,7 @@ func main() {
 		insertionCount int
 		deletionCount  int
 		comments       string
+		redlineSource  string
 		status         string
 		confidence     string
 		format         string
@@ -110,17 +111,24 @@ func main() {
 		}
 
 		d := res.detection
-		hasRedlines := d.SettingEnabled && d.TrackedChangesPresent
-		if d.HasComments {
-			hasRedlines = true
-		}
+		hasRedlines := d.HasRedlines()
 		if hasRedlines {
 			redlinesFound++
 		}
 
 		comments := ""
 		if d.HasComments {
-			comments = "Enabled"
+			comments = fmt.Sprintf("Comments (%d)", d.CommentCount)
+		}
+
+		redlineSource := ""
+		switch {
+		case d.HasComments && d.HasTrackedChanges():
+			redlineSource = "Tracked Changes + Comments"
+		case d.HasComments:
+			redlineSource = "Comments"
+		case d.HasTrackedChanges():
+			redlineSource = "Tracked Changes"
 		}
 
 		rows = append(rows, row{
@@ -129,6 +137,7 @@ func main() {
 			insertionCount: d.InsertionCount,
 			deletionCount:  d.DeletionCount,
 			comments:       comments,
+			redlineSource:  redlineSource,
 			status:         d.TrackChangesStatus.String(),
 			confidence:     map[bool]string{true: "High", false: "Low"}[d.HighConfidence],
 			format:         d.Format.String(),
@@ -140,9 +149,9 @@ func main() {
 	})
 
 	if *debugFlag {
-		tbl := table.New("FILEPATH", "REDLINES", "INSERTIONS", "DELETIONS", "COMMENTS", "STATUS", "CONF", "FORMAT")
+		tbl := table.New("FILEPATH", "REDLINES", "INSERTIONS", "DELETIONS", "COMMENTS", "SOURCE", "STATUS", "CONF", "FORMAT")
 		for _, r := range rows {
-			tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, r.comments, r.status, r.confidence, r.format)
+			tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, r.comments, r.redlineSource, r.status, r.confidence, r.format)
 		}
 		tbl.Print()
 	} else {
@@ -160,11 +169,11 @@ func main() {
 			os.Exit(1)
 		}
 		defer file.Close()
-		fmt.Fprintln(file, "filepath,redlines,insertions,deletions,comments,status,conf,format")
+		fmt.Fprintln(file, "filepath,redlines,insertions,deletions,comments,source,status,conf,format")
 		for _, r := range rows {
-			fmt.Fprintf(file, "%s,%v,%d,%d,%s,%s,%s,%s\n",
+			fmt.Fprintf(file, "%s,%v,%d,%d,%s,%s,%s,%s,%s\n",
 				r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount,
-				r.comments, r.status, r.confidence, r.format)
+				r.comments, r.redlineSource, r.status, r.confidence, r.format)
 		}
 	}
 
