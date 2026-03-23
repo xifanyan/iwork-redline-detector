@@ -285,8 +285,11 @@ type RedlineDetection struct {
 # Directory (finds all .pages files)
 ./bin/iwork-redline-detector ./path/to/folder/
 
-# With debug output (shows insertions/deletions count)
+# With debug output (shows insertions/deletions count and comments)
 ./bin/iwork-redline-detector -debug ./path/to/folder/
+
+# Output results as CSV to a file
+./bin/iwork-redline-detector -csv results.csv ./path/to/folder/
 
 # Custom thread count (default: 2)
 ./bin/iwork-redline-detector -threads 4 ./path/to/folder/
@@ -307,15 +310,23 @@ tracking.insert.deletion.pages  true      Modern
 
 **Debug mode** (aligned table, all columns):
 ```
-FILEPATH                        REDLINES  INSERTIONS  DELETIONS  STATUS                  CONF  FORMAT  
-normal.pages                    false     20          1          Disabled                High  Modern  
-normal.track.accepted.pages     false     21          1          Enabled (No Changes)    High  Modern  
-blank.track.pages               false     20          1          Enabled (No Changes)    High  Modern  
-track.not-accepted.pages        true      22          1          Enabled (With Changes)  High  Modern  
-deletion.track-paused.pages     true      21          2          Paused                  High  Modern  
-tracking.insert.deletion.pages   true      22          3          Enabled (With Changes)  High  Modern  
-pages09/normal.pages            false     0           0          Disabled                High  Pages '09  
-pages09/deletion.track-paused.pages  true   0           1          Paused                  High  Pages '09  
+FILEPATH                        REDLINES  INSERTIONS  DELETIONS  COMMENTS  STATUS                  CONF  FORMAT  
+normal.pages                    false     20          1                    Disabled                High  Modern  
+normal.track.accepted.pages     false     21          1                    Enabled (No Changes)    High  Modern  
+blank.track.pages               false     20          1                    Enabled (No Changes)    High  Modern  
+track.not-accepted.pages        true      22          1                    Enabled (With Changes)  High  Modern  
+deletion.track-paused.pages     true      21          2                    Paused                  High  Modern  
+tracking.insert.deletion.pages   true      22          3                    Enabled (With Changes)  High  Modern  
+pages09/normal.pages            false     0           0                    Disabled                High  Pages '09  
+pages09/deletion.track-paused.pages  true   0           1                    Paused                  High  Pages '09  
+```
+
+**CSV output** (when `-csv <filename>` is specified):
+```csv
+filepath,redlines,insertions,deletions,comments,status,conf,format
+normal.pages,false,20,1,,Disabled,High,Modern
+track.not-accepted.pages,true,22,1,,Enabled (With Changes),High,Modern
+document.with.comments.pages,true,22,3,Enabled,Enabled (With Changes),High,Modern
 ```
 
 ### Detection Confidence
@@ -368,6 +379,7 @@ When settings fields cannot be found, the detector falls back to heuristic detec
 - **ArchiveInfo parsing**: Full typed-message traversal in `iwa/parser.go` is still incomplete for some IWA structures, so detailed message extraction remains limited.
 - **Heuristic threshold**: Modern format change detection uses insertion/deletion byte-pattern thresholds and may produce false positives on documents with unusual styling density.
 - **Legacy XML**: Heuristic scanning is not applied to iWork '09 files; change counts come from XML parsing only.
+- **Comments detection**: Only available for modern IWA format; legacy iWork '09 format does not support comments detection.
 - **Change records**: Individual change author/timestamp parsing not yet fully implemented
 - **Legal-grade detection**: For highest confidence, compare against a known-clean baseline document
 
