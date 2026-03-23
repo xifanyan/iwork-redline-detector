@@ -11,6 +11,32 @@ status: completed
 
 # iWork Redline Detector
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Research](#research)
+- [How It Works](#how-it-works)
+  - [Supported Formats](#supported-formats)
+  - [Detection Approach](#detection-approach)
+  - [Step-by-Step Process](#step-by-step-process)
+  - [Why Baselines?](#why-baselines)
+  - [In Summary](#in-summary)
+- [Implementation](#implementation)
+  - [Architecture](#architecture)
+  - [Detection Logic](#detection-logic)
+  - [Result Structure](#result-structure)
+- [Usage](#usage)
+  - [Output Formats](#output-formats)
+  - [Detection Confidence](#detection-confidence)
+- [Test Results](#test-results)
+  - [Modern Format](#modern-format-testdatapages)
+  - [Legacy iWork '09 Format](#legacy-iwork-09-format-testdatapages09)
+- [Technical Notes](#technical-notes)
+- [Limitations](#limitations)
+- [Related](#related)
+
+## Overview
+
 Go-based tool to detect track changes and redlines in Apple iWork documents (.pages files). Uses direct protobuf field scanning plus change heuristics to identify:
 - Track Changes feature enabled/disabled status
 - Tracked insertions and deletions
