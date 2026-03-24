@@ -79,10 +79,9 @@ func main() {
 	}
 
 	bar := progressbar.NewOptions(len(pagesFiles),
-		progressbar.OptionEnableColorCodes(true),
 		progressbar.OptionShowCount(),
 		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetDescription("[cyan]Processing..."),
+		progressbar.OptionSetDescription("Processing..."),
 		progressbar.OptionOnCompletion(func() {
 			fmt.Fprint(os.Stderr, "\n")
 		}),
