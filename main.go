@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
@@ -14,42 +15,61 @@ import (
 )
 
 var (
-	debugFlag   = flag.Bool("debug", false, "Show detailed information (insertions, deletions, etc.)")
-	csvFlag     = flag.String("csv", "", "Output results as CSV to specified file")
-	threadsFlag = flag.Int("threads", 2, "Number of concurrent threads")
+	debugFlag    = flag.Bool("debug", false, "Show detailed information (insertions, deletions, etc.)")
+	csvFlag      = flag.String("csv", "", "Output results as CSV to specified file")
+	threadsFlag  = flag.Int("threads", 2, "Number of concurrent threads")
+	filelistFlag = flag.String("filelist", "", "Path to txt file containing list of .pages files (one per line)")
 )
 
 func main() {
 	flag.Parse()
 
-	if flag.NArg() != 1 {
-		fmt.Println("Usage: iwork-redline-detector [-debug] [-csv <filename>] [-threads N] <path-to.pages-file-or-directory>")
+	if *filelistFlag != "" && flag.NArg() > 0 {
+		fmt.Fprintln(os.Stderr, "Error: cannot use both positional path and --filelist flag")
+		fmt.Println("Usage: iwork-redline-detector [-debug] [-csv <filename>] [-threads N] [-filelist <path-to-file>] <path-to.pages-file-or-directory>")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
-	path := flag.Arg(0)
-
-	info, err := os.Stat(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	if flag.NArg() != 1 && *filelistFlag == "" {
+		fmt.Println("Usage: iwork-redline-detector [-debug] [-csv <filename>] [-threads N] [-filelist <path-to-file>] <path-to.pages-file-or-directory>")
+		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
 	var pagesFiles []string
+	var basePath string
+	var err error
 
-	if info.IsDir() {
-		pagesFiles, err = findPagesFiles(path)
+	if *filelistFlag != "" {
+		pagesFiles, err = readFilelist(*filelistFlag)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error finding .pages files: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error reading filelist: %v\n", err)
 			os.Exit(1)
 		}
+		basePath = ""
 	} else {
-		if !strings.HasSuffix(path, ".pages") {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a .pages file\n", path)
+		path := flag.Arg(0)
+		info, err := os.Stat(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		pagesFiles = []string{path}
+
+		if info.IsDir() {
+			pagesFiles, err = findPagesFiles(path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error finding .pages files: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			if !strings.HasSuffix(path, ".pages") {
+				fmt.Fprintf(os.Stderr, "Error: %s is not a .pages file\n", path)
+				os.Exit(1)
+			}
+			pagesFiles = []string{path}
+		}
+		basePath = path
 	}
 
 	threads := *threadsFlag
@@ -78,9 +98,14 @@ func main() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			relPath, _ := filepath.Rel(path, f)
-			if relPath == "." {
-				relPath = filepath.Base(f)
+			var relPath string
+			if basePath == "" {
+				relPath = f
+			} else {
+				relPath, _ = filepath.Rel(basePath, f)
+				if relPath == "." {
+					relPath = filepath.Base(f)
+				}
 			}
 
 			r, err := detector.DetectRedlines(f)
@@ -190,6 +215,31 @@ func findPagesFiles(dir string) ([]string, error) {
 		return nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+func readFilelist(path string) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var files []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if !strings.HasSuffix(line, ".pages") {
+			continue
+		}
+		files = append(files, line)
+	}
+	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	return files, nil
