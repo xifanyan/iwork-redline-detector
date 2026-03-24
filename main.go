@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/rodaine/table"
+	"github.com/schollz/progressbar/v3"
 	"github.com/xifanyan/iwork-redline-detector/detector"
 )
 
@@ -77,6 +78,16 @@ func main() {
 		threads = 1
 	}
 
+	bar := progressbar.NewOptions(len(pagesFiles),
+		progressbar.OptionEnableColorCodes(true),
+		progressbar.OptionShowCount(),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetDescription("[cyan]Processing..."),
+		progressbar.OptionOnCompletion(func() {
+			fmt.Fprint(os.Stderr, "\n")
+		}),
+		progressbar.OptionSetTheme(progressbar.Theme{Saucer: "█", SaucerPadding: " ", BarStart: "|", BarEnd: "|"}),
+	)
 	fmt.Printf("Processing %d file(s) with %d thread(s)...\n\n", len(pagesFiles), threads)
 
 	type result struct {
@@ -132,6 +143,7 @@ func main() {
 
 	var rows []row
 	for res := range results {
+		bar.Add(1)
 		if res.err != nil {
 			fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", res.file, res.err)
 			continue
