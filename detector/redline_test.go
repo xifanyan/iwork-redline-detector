@@ -464,7 +464,7 @@ func TestCLI_DebugOutputShowsCommentOnlyReason(t *testing.T) {
 	if !bytes.Contains(output, []byte("true")) {
 		t.Fatalf("output missing redline=true signal: %s", output)
 	}
-	if !bytes.Contains(output, []byte("Comments (")) {
+	if !bytes.Contains(output, []byte("Comments")) {
 		t.Fatalf("output missing comment source indicator: %s", output)
 	}
 	if !bytes.Contains(output, []byte("Paused")) {

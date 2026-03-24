@@ -45,6 +45,10 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
+		if !strings.HasSuffix(path, ".pages") {
+			fmt.Fprintf(os.Stderr, "Error: %s is not a .pages file\n", path)
+			os.Exit(1)
+		}
 		pagesFiles = []string{path}
 	}
 
@@ -113,7 +117,7 @@ func main() {
 
 		comments := ""
 		if d.HasComments {
-			comments = fmt.Sprintf("Comments (%d)", d.CommentCount)
+			comments = fmt.Sprintf("%d", d.CommentCount)
 		}
 
 		redlineSource := ""
@@ -166,7 +170,7 @@ func main() {
 		defer file.Close()
 		fmt.Fprintln(file, "filepath,redlines,insertions,deletions,comments,source,status,conf,format")
 		for _, r := range rows {
-			fmt.Fprintf(file, "%s,%v,%d,%d,%s,%s,%s,%s,%s\n",
+			fmt.Fprintf(file, "%q,%v,%d,%d,%q,%q,%q,%q,%q\n",
 				r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount,
 				r.comments, r.redlineSource, r.status, r.confidence, r.format)
 		}
