@@ -86,7 +86,7 @@ func main() {
 		progressbar.OptionOnCompletion(func() {
 			fmt.Fprint(os.Stderr, "\n")
 		}),
-		progressbar.OptionSetTheme(progressbar.Theme{Saucer: "█", SaucerPadding: " ", BarStart: "|", BarEnd: "|"}),
+		progressbar.OptionSetTheme(progressbar.ThemeASCII),
 	)
 	fmt.Printf("Processing %d file(s) with %d thread(s)...\n\n", len(pagesFiles), threads)
 
