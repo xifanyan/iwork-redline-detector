@@ -87,6 +87,7 @@ func main() {
 			fmt.Fprint(os.Stderr, "\n")
 		}),
 		progressbar.OptionSetTheme(progressbar.ThemeASCII),
+		progressbar.OptionSetElapsedTime(true),
 	)
 	fmt.Printf("Processing %d file(s) with %d thread(s)...\n\n", len(pagesFiles), threads)
 
@@ -234,7 +235,7 @@ func main() {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\r\x1b[2KProcessed: %d | Errors: %d\n", len(rows), len(errors))
+	fmt.Fprintf(os.Stderr, "Processed: %d | Errors: %d\n", len(rows), len(errors))
 
 	if len(errors) > 0 {
 		os.Exit(1)
