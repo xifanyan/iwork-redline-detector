@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -80,6 +81,18 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 			result.Format = FormatEncrypted
 		}
 		return result, nil
+	}
+
+	if format == FormatUnknown {
+		if _, err := os.Stat(pagesPath); err == nil {
+			r, zipErr := zip.OpenReader(pagesPath)
+			if zipErr != nil {
+				result.IsEncrypted = true
+				result.Format = FormatEncrypted
+				return result, nil
+			}
+			r.Close()
+		}
 	}
 
 	if format == FormatLegacyXML {
@@ -467,18 +480,27 @@ func detectRedlinesLegacyXML(pagesPath string, result *RedlineDetection) (*Redli
 	defer r.Close()
 
 	var indexData []byte
+	var readErr error
 	for _, entry := range r.File {
 		if entry.Name == "index.xml" {
-			indexData, err = readZipEntry(entry)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read index.xml: %w", err)
+			indexData, readErr = readZipEntry(entry)
+			if readErr != nil {
+				if isEncryptionError(readErr) {
+					result.IsEncrypted = true
+					return result, nil
+				}
+				return nil, fmt.Errorf("failed to read index.xml: %w", readErr)
 			}
 			break
 		}
 		if entry.Name == "index.xml.gz" {
-			indexData, err = readZipEntry(entry)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read index.xml.gz: %w", err)
+			indexData, readErr = readZipEntry(entry)
+			if readErr != nil {
+				if isEncryptionError(readErr) {
+					result.IsEncrypted = true
+					return result, nil
+				}
+				return nil, fmt.Errorf("failed to read index.xml.gz: %w", readErr)
 			}
 			indexData, err = decompressGzip(indexData)
 			if err != nil {
@@ -492,6 +514,9 @@ func detectRedlinesLegacyXML(pagesPath string, result *RedlineDetection) (*Redli
 		if encrypted, err := DetectEncryption(pagesPath); err == nil && encrypted {
 			result.IsEncrypted = true
 			return result, nil
+		}
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read index.xml: %w", readErr)
 		}
 		return nil, fmt.Errorf("no index.xml or index.xml.gz found in archive")
 	}
@@ -623,6 +648,20 @@ func localName(se xml.StartElement, name string) bool {
 func localNameAny(se xml.StartElement, names ...string) bool {
 	for _, name := range names {
 		if se.Name.Local == name {
+			return true
+		}
+	}
+	return false
+}
+
+func isEncryptionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	indicators := []string{"password", "encrypted", "unsupported compression", "crypto", "invalid header"}
+	for _, indicator := range indicators {
+		if strings.Contains(msg, indicator) {
 			return true
 		}
 	}
