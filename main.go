@@ -87,6 +87,7 @@ func main() {
 			fmt.Fprint(os.Stderr, "\n")
 		}),
 		progressbar.OptionSetElapsedTime(true),
+		progressbar.OptionSetPredictTime(false),
 		progressbar.OptionShowElapsedTimeOnFinish(),
 	)
 	fmt.Printf("Processing %d file(s) with %d thread(s)...\n\n", len(pagesFiles), threads)
