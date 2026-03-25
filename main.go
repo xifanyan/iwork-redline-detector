@@ -88,6 +88,7 @@ func main() {
 		}),
 		progressbar.OptionSetTheme(progressbar.ThemeASCII),
 		progressbar.OptionSetElapsedTime(true),
+		progressbar.OptionShowElapsedTimeOnFinish(),
 	)
 	fmt.Printf("Processing %d file(s) with %d thread(s)...\n\n", len(pagesFiles), threads)
 
