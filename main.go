@@ -86,7 +86,6 @@ func main() {
 		progressbar.OptionOnCompletion(func() {
 			fmt.Fprint(os.Stderr, "\n")
 		}),
-		progressbar.OptionSetTheme(progressbar.ThemeASCII),
 		progressbar.OptionSetElapsedTime(true),
 		progressbar.OptionShowElapsedTimeOnFinish(),
 	)
