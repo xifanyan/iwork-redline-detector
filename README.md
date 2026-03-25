@@ -71,6 +71,10 @@ The tool detects the format automatically by inspecting ZIP entry names:
 - `Index/Document.iwa` → Modern IWA format
 - `index.xml` / `index.xml.gz` → Legacy XML format
 
+#### Format Fallback
+
+If a file appears to be Modern format (has `Index/Document.iwa`) but parsing fails (corrupt IWA, invalid snappy data, etc.), the tool automatically falls back to legacy XML parsing as a recovery mechanism. This makes the tool more robust when encountering edge cases or partially corrupted files.
+
 ### Detection Approach
 
 The detector uses a **multi-signal detection strategy** to accurately identify track changes status:
@@ -217,7 +221,7 @@ Normal documents already have ~20 of these patterns for regular text styling (no
 
 | Component | Description |
 |-----------|-------------|
-| `main.go` | CLI entry point and command-line argument parsing |
+| `main.go` | CLI entry point, progress bar, batch processing, error handling |
 | `iwa/parser.go` | IWA file parsing (Snappy decompression + protobuf decoding) |
 | `detector/types.go` | Type ID mappings, field constants, TrackChangesStatus enum |
 | `detector/redline.go` | Redline detection logic + protobuf settings parsing |
@@ -233,7 +237,14 @@ Normal documents already have ~20 of these patterns for regular text styling (no
     - `types.go`
     - `redline.go`
   - `bin/`
-    - `iwork-redline-detector`
+    - `iwork-redline-detector` (platform-specific binaries)
+
+**CLI Features:**
+- Progress bar with elapsed time display
+- Concurrent batch processing with configurable thread count
+- Error collection and reporting via separate errors.csv file
+- Format auto-detection with automatic fallback to legacy XML parsing
+- Summary statistics (processed count, error count, format counts)
 
 ### Detection Logic
 
@@ -310,11 +321,17 @@ type RedlineDetection struct {
 # With debug output (shows insertions/deletions count and comments)
 ./bin/iwork-redline-detector -debug ./path/to/folder/
 
-# Output results as CSV to a file
+# Output results as CSV to a file (suppresses console table output)
 ./bin/iwork-redline-detector -csv results.csv ./path/to/folder/
 
 # Custom thread count (default: 2)
 ./bin/iwork-redline-detector -threads 4 ./path/to/folder/
+
+# Batch processing from filelist (one .pages path per line)
+./bin/iwork-redline-detector -filelist filelist.txt
+
+# Specify custom errors CSV file (default: errors.csv)
+./bin/iwork-redline-detector -errors-csv processing_errors.csv -filelist filelist.txt
 ```
 
 ### Output Formats
@@ -351,10 +368,25 @@ track.not-accepted.pages,true,22,1,,Tracked Changes,Enabled (With Changes),High,
 pages09/comments.no-tracking.pages,true,0,0,Comments (1),Comments,Paused,High,Pages '09
 ```
 
+**Progress Bar & Summary Report:**
+```
+Processing 24436 file(s) with 2 thread(s)...
+
+Processing...  34% |█████████████| (8552/24436) [1m30s]
+Processed: 24423 | Errors: 13 | Modern: 1233 | Legacy: 1231
+```
+
+**Errors CSV** (when errors occur, written to `errors.csv` by default or custom path):
+```csv
+filepath,error message
+"\\server\share\corrupt.pages","failed to decompress Document.iwa: snappy: corrupt input"
+"\\server\share\truncated.pages","failed to extract Document.iwa: zip: not a valid zip file"
+```
+
 ### Exit Codes
 
-- `0`: processing completed successfully, regardless of whether redlines/comments were found
-- `1`: usage or runtime error (invalid args, unreadable file, CSV write failure, etc.)
+- `0`: processing completed with no errors (redlines may or may not have been found)
+- `1`: usage or runtime error (invalid args, unreadable file, CSV write failure, or any file processing error)
 
 ### Detection Confidence
 
@@ -414,6 +446,7 @@ When settings fields cannot be found, the detector falls back to heuristic detec
 - **Modern comments**: Current modern comment detection is based on observed payload text patterns in `Document.iwa`, not full typed comment-archive traversal yet.
 - **Change records**: Individual change author/timestamp parsing not yet fully implemented
 - **Legal-grade detection**: For highest confidence, compare against a known-clean baseline document
+- **Format fallback**: When Modern format parsing fails and fallback to legacy XML succeeds, the reported format remains "Modern" (reflecting the detected structure), even though legacy parsing was used
 
 ## Related
 
