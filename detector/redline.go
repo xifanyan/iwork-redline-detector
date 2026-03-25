@@ -79,16 +79,16 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 
 	docData, err := extractDocumentIWA(pagesPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract Document.iwa: %w", err)
+		return detectRedlinesLegacyXML(pagesPath, result)
 	}
 
 	if len(docData) < 4 {
-		return nil, fmt.Errorf("Document.iwa too short: %d bytes", len(docData))
+		return detectRedlinesLegacyXML(pagesPath, result)
 	}
 
 	decompressed, err := iwa.DecompressSnappy(docData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decompress Document.iwa: %w", err)
+		return detectRedlinesLegacyXML(pagesPath, result)
 	}
 
 	hasTrackChanges, insertions, deletions := detectTrackChangesHeuristic(decompressed)

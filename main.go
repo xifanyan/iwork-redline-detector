@@ -16,10 +16,11 @@ import (
 )
 
 var (
-	debugFlag    = flag.Bool("debug", false, "Show detailed information (insertions, deletions, etc.)")
-	csvFlag      = flag.String("csv", "", "Output results as CSV to specified file")
-	threadsFlag  = flag.Int("threads", 2, "Number of concurrent threads")
-	filelistFlag = flag.String("filelist", "", "Path to txt file containing list of .pages files (one per line)")
+	debugFlag     = flag.Bool("debug", false, "Show detailed information (insertions, deletions, etc.)")
+	csvFlag       = flag.String("csv", "", "Output results as CSV to specified file")
+	errorsCsvFlag = flag.String("errors-csv", "errors.csv", "Output errors to specified CSV file")
+	threadsFlag   = flag.Int("threads", 2, "Number of concurrent threads")
+	filelistFlag  = flag.String("filelist", "", "Path to txt file containing list of .pages files (one per line)")
 )
 
 func main() {
@@ -96,6 +97,11 @@ func main() {
 		err       error
 	}
 
+	type errorResult struct {
+		filepath string
+		message  string
+	}
+
 	results := make(chan result, len(pagesFiles))
 
 	sem := make(chan struct{}, threads)
@@ -141,10 +147,11 @@ func main() {
 	}
 
 	var rows []row
+	var errors []errorResult
 	for res := range results {
 		bar.Add(1)
 		if res.err != nil {
-			fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", res.file, res.err)
+			errors = append(errors, errorResult{filepath: res.relPath, message: res.err.Error()})
 			continue
 		}
 
@@ -183,18 +190,20 @@ func main() {
 		return rows[i].filePath < rows[j].filePath
 	})
 
-	if *debugFlag {
-		tbl := table.New("FILEPATH", "REDLINES", "INSERTIONS", "DELETIONS", "COMMENTS", "SOURCE", "STATUS", "CONF", "FORMAT")
-		for _, r := range rows {
-			tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, r.comments, r.redlineSource, r.status, r.confidence, r.format)
+	if *csvFlag == "" {
+		if *debugFlag {
+			tbl := table.New("FILEPATH", "REDLINES", "INSERTIONS", "DELETIONS", "COMMENTS", "SOURCE", "STATUS", "CONF", "FORMAT")
+			for _, r := range rows {
+				tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, r.comments, r.redlineSource, r.status, r.confidence, r.format)
+			}
+			tbl.Print()
+		} else {
+			tbl := table.New("FILEPATH", "REDLINES", "FORMAT")
+			for _, r := range rows {
+				tbl.AddRow(r.filePath, r.hasRedlines, r.format)
+			}
+			tbl.Print()
 		}
-		tbl.Print()
-	} else {
-		tbl := table.New("FILEPATH", "REDLINES", "FORMAT")
-		for _, r := range rows {
-			tbl.AddRow(r.filePath, r.hasRedlines, r.format)
-		}
-		tbl.Print()
 	}
 
 	if *csvFlag != "" {
@@ -212,6 +221,24 @@ func main() {
 		}
 	}
 
+	if len(errors) > 0 {
+		errFile, err := os.Create(*errorsCsvFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating errors CSV file: %v\n", err)
+			os.Exit(1)
+		}
+		defer errFile.Close()
+		fmt.Fprintln(errFile, "filepath,error message")
+		for _, e := range errors {
+			fmt.Fprintf(errFile, "%q,%q\n", e.filepath, e.message)
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "\r\x1b[2KProcessed: %d | Errors: %d\n", len(rows), len(errors))
+
+	if len(errors) > 0 {
+		os.Exit(1)
+	}
 }
 
 func findPagesFiles(dir string) ([]string, error) {
