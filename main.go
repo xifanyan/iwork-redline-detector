@@ -167,7 +167,7 @@ func main() {
 				filePath:    res.relPath,
 				hasRedlines: false,
 				encrypted:   true,
-				format:      "Encrypted",
+				format:      d.Format.String(),
 			})
 			continue
 		}
