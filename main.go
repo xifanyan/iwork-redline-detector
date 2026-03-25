@@ -150,6 +150,7 @@ func main() {
 
 	var rows []row
 	var errors []errorResult
+	var modernCount, legacyCount int
 	for res := range results {
 		bar.Add(1)
 		if res.err != nil {
@@ -175,6 +176,13 @@ func main() {
 			redlineSource = "Tracked Changes"
 		}
 
+		formatStr := d.Format.String()
+		if d.Format == detector.FormatModernIWA {
+			modernCount++
+		} else if d.Format == detector.FormatLegacyXML {
+			legacyCount++
+		}
+
 		rows = append(rows, row{
 			filePath:       res.relPath,
 			hasRedlines:    hasRedlines,
@@ -184,7 +192,7 @@ func main() {
 			redlineSource:  redlineSource,
 			status:         d.TrackChangesStatus.String(),
 			confidence:     map[bool]string{true: "High", false: "Low"}[d.HighConfidence],
-			format:         d.Format.String(),
+			format:         formatStr,
 		})
 	}
 
@@ -236,7 +244,7 @@ func main() {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Processed: %d | Errors: %d\n", len(rows), len(errors))
+	fmt.Fprintf(os.Stderr, "Processed: %d | Errors: %d | Modern: %d | Legacy: %d\n", len(rows), len(errors), modernCount, legacyCount)
 
 	if len(errors) > 0 {
 		os.Exit(1)
