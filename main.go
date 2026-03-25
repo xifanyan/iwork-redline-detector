@@ -217,9 +217,9 @@ func main() {
 		defer file.Close()
 		fmt.Fprintln(file, "filepath,redlines,insertions,deletions,comments,source,status,conf,format")
 		for _, r := range rows {
-			fmt.Fprintf(file, "%q,%v,%d,%d,%q,%q,%q,%q,%q\n",
-				r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount,
-				r.comments, r.redlineSource, r.status, r.confidence, r.format)
+			fmt.Fprintf(file, "%s,%v,%d,%d,%s,%s,%s,%s,%s\n",
+				csvQuote(r.filePath), r.hasRedlines, r.insertionCount, r.deletionCount,
+				csvQuote(r.comments), csvQuote(r.redlineSource), csvQuote(r.status), csvQuote(r.confidence), csvQuote(r.format))
 		}
 	}
 
@@ -232,7 +232,7 @@ func main() {
 		defer errFile.Close()
 		fmt.Fprintln(errFile, "filepath,error message")
 		for _, e := range errors {
-			fmt.Fprintf(errFile, "%q,%q\n", e.filepath, e.message)
+			fmt.Fprintf(errFile, "%s,%s\n", csvQuote(e.filepath), csvQuote(e.message))
 		}
 	}
 
@@ -283,4 +283,14 @@ func readFilelist(path string) ([]string, error) {
 		return nil, err
 	}
 	return files, nil
+}
+
+func csvQuote(s string) string {
+	if s == "" {
+		return ""
+	}
+	if strings.ContainsAny(s, ",\"\n") {
+		return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+	}
+	return s
 }
