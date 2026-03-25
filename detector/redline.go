@@ -73,7 +73,6 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 
 	if encrypted, err := DetectEncryption(pagesPath); err == nil && encrypted {
 		result.IsEncrypted = true
-		result.Format = FormatModernIWA
 		return result, nil
 	}
 
