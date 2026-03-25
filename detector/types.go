@@ -20,6 +20,7 @@ const (
 	FormatUnknown FormatType = iota
 	FormatModernIWA
 	FormatLegacyXML
+	FormatEncrypted
 )
 
 const (
@@ -102,6 +103,8 @@ func (f FormatType) String() string {
 		return "Modern"
 	case FormatLegacyXML:
 		return "Pages '09"
+	case FormatEncrypted:
+		return "Encrypted"
 	default:
 		return "Unknown"
 	}

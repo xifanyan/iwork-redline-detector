@@ -71,13 +71,16 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 		},
 	}
 
-	if encrypted, err := DetectEncryption(pagesPath); err == nil && encrypted {
-		result.IsEncrypted = true
-		return result, nil
-	}
-
 	format := DetectFormat(pagesPath)
 	result.Format = format
+
+	if encrypted, err := DetectEncryption(pagesPath); err == nil && encrypted {
+		result.IsEncrypted = true
+		if format == FormatUnknown {
+			result.Format = FormatEncrypted
+		}
+		return result, nil
+	}
 
 	if format == FormatLegacyXML {
 		return detectRedlinesLegacyXML(pagesPath, result)
