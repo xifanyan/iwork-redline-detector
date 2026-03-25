@@ -139,6 +139,7 @@ func main() {
 	type row struct {
 		filePath       string
 		hasRedlines    bool
+		encrypted      bool
 		insertionCount int
 		deletionCount  int
 		comments       string
@@ -150,7 +151,7 @@ func main() {
 
 	var rows []row
 	var errors []errorResult
-	var modernCount, legacyCount int
+	var modernCount, legacyCount, encryptedCount int
 	for res := range results {
 		bar.Add(1)
 		if res.err != nil {
@@ -159,6 +160,18 @@ func main() {
 		}
 
 		d := res.detection
+
+		if d.IsEncrypted {
+			encryptedCount++
+			rows = append(rows, row{
+				filePath:    res.relPath,
+				hasRedlines: false,
+				encrypted:   true,
+				format:      "Encrypted",
+			})
+			continue
+		}
+
 		hasRedlines := d.HasRedlines()
 
 		comments := ""
@@ -186,6 +199,7 @@ func main() {
 		rows = append(rows, row{
 			filePath:       res.relPath,
 			hasRedlines:    hasRedlines,
+			encrypted:      false,
 			insertionCount: d.InsertionCount,
 			deletionCount:  d.DeletionCount,
 			comments:       comments,
@@ -202,9 +216,9 @@ func main() {
 
 	if *csvFlag == "" {
 		if *debugFlag {
-			tbl := table.New("FILEPATH", "REDLINES", "INSERTIONS", "DELETIONS", "COMMENTS", "SOURCE", "STATUS", "CONF", "FORMAT")
+			tbl := table.New("FILEPATH", "REDLINES", "ENCRYPTED", "INSERTIONS", "DELETIONS", "COMMENTS", "SOURCE", "STATUS", "CONF", "FORMAT")
 			for _, r := range rows {
-				tbl.AddRow(r.filePath, r.hasRedlines, r.insertionCount, r.deletionCount, r.comments, r.redlineSource, r.status, r.confidence, r.format)
+				tbl.AddRow(r.filePath, r.hasRedlines, r.encrypted, r.insertionCount, r.deletionCount, r.comments, r.redlineSource, r.status, r.confidence, r.format)
 			}
 			tbl.Print()
 		} else {
@@ -223,10 +237,10 @@ func main() {
 			os.Exit(1)
 		}
 		defer file.Close()
-		fmt.Fprintln(file, "filepath,redlines,insertions,deletions,comments,source,status,conf,format")
+		fmt.Fprintln(file, "filepath,redlines,encrypted,insertions,deletions,comments,source,status,conf,format")
 		for _, r := range rows {
-			fmt.Fprintf(file, "%s,%v,%d,%d,%s,%s,%s,%s,%s\n",
-				csvQuote(r.filePath), r.hasRedlines, r.insertionCount, r.deletionCount,
+			fmt.Fprintf(file, "%s,%v,%v,%d,%d,%s,%s,%s,%s,%s\n",
+				csvQuote(r.filePath), r.hasRedlines, r.encrypted, r.insertionCount, r.deletionCount,
 				csvQuote(r.comments), csvQuote(r.redlineSource), csvQuote(r.status), csvQuote(r.confidence), csvQuote(r.format))
 		}
 	}
@@ -244,7 +258,7 @@ func main() {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Processed: %d | Errors: %d | Modern: %d | Legacy: %d\n", len(rows), len(errors), modernCount, legacyCount)
+	fmt.Fprintf(os.Stderr, "Processed: %d | Errors: %d | Encrypted: %d | Modern: %d | Legacy: %d\n", len(rows), len(errors), encryptedCount, modernCount, legacyCount)
 
 	if len(errors) > 0 {
 		os.Exit(1)

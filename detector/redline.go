@@ -24,6 +24,7 @@ type Change struct {
 
 type RedlineDetection struct {
 	Format                FormatType
+	IsEncrypted           bool
 	TrackChangesStatus    TrackChangesStatus
 	SettingEnabled        bool
 	SettingPaused         bool
@@ -70,6 +71,12 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 		},
 	}
 
+	if encrypted, err := DetectEncryption(pagesPath); err == nil && encrypted {
+		result.IsEncrypted = true
+		result.Format = FormatModernIWA
+		return result, nil
+	}
+
 	format := DetectFormat(pagesPath)
 	result.Format = format
 
@@ -79,16 +86,16 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 
 	docData, err := extractDocumentIWA(pagesPath)
 	if err != nil {
-		return detectRedlinesLegacyXML(pagesPath, result)
+		return nil, fmt.Errorf("failed to extract Document.iwa: %w", err)
 	}
 
 	if len(docData) < 4 {
-		return detectRedlinesLegacyXML(pagesPath, result)
+		return nil, fmt.Errorf("Document.iwa too short: %d bytes", len(docData))
 	}
 
 	decompressed, err := iwa.DecompressSnappy(docData)
 	if err != nil {
-		return detectRedlinesLegacyXML(pagesPath, result)
+		return nil, fmt.Errorf("failed to decompress Document.iwa: %w", err)
 	}
 
 	hasTrackChanges, insertions, deletions := detectTrackChangesHeuristic(decompressed)
@@ -146,6 +153,33 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 	}
 
 	return result, nil
+}
+
+func DetectEncryption(pagesPath string) (bool, error) {
+	r, err := zip.OpenReader(pagesPath)
+	if err != nil {
+		return false, err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		if f.Name == ".iwpv2" {
+			rc, err := f.Open()
+			if err != nil {
+				return false, err
+			}
+			defer rc.Close()
+			data := make([]byte, 98)
+			n, err := rc.Read(data)
+			if err != nil {
+				return false, err
+			}
+			if n == 98 && data[0] == 2 && data[2] == 1 {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func detectBooleanFieldValue(data []byte, fieldNum uint64) (bool, bool) {
@@ -453,6 +487,10 @@ func detectRedlinesLegacyXML(pagesPath string, result *RedlineDetection) (*Redli
 	}
 
 	if indexData == nil {
+		if encrypted, err := DetectEncryption(pagesPath); err == nil && encrypted {
+			result.IsEncrypted = true
+			return result, nil
+		}
 		return nil, fmt.Errorf("no index.xml or index.xml.gz found in archive")
 	}
 
