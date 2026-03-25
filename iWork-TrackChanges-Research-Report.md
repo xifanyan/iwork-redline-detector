@@ -573,7 +573,238 @@ obriensp/iWorkFileFormat/iWorkFileInspector/
 
 ---
 
-## 10. Implementation Checklist
+## 10. Encryption Detection
+
+### Overview
+
+iWork Pages documents support password protection/encryption. The encryption mechanism differs between modern and legacy formats:
+
+| Format | Encryption Method | Detection Approach |
+|--------|-------------------|-------------------|
+| **Modern** (2013+) | Individual files in `Index.zip` encrypted with AES128-CBC | Check for `.iwpv2` file |
+| **Legacy** (iWork '09) | Entire ZIP archive encrypted as single unit | Check for missing `index.xml` |
+
+**Important:** There are **no protobuf message fields** that indicate encryption status. Encryption is handled entirely at the file/bundle level.
+
+---
+
+### Modern Format Encryption
+
+#### How It Works
+
+When a modern iWork document is password-protected:
+
+1. **Bundle structure remains intact** — The `.pages` bundle still contains `Index.zip`, `Metadata/`, `Data/` folders
+2. **Files inside `Index.zip` are individually encrypted** using AES128 with PKCS7 padding
+3. **Unencrypted files:** `Metadata/` folder and `Data/` folder (images, videos) remain accessible
+4. **Encryption indicator files** are placed in the bundle root
+
+#### Key Files
+
+| File | Purpose | Size |
+|------|---------|------|
+| `.iwpv2` | Password verifier data | 98 bytes |
+| `.iwph` | Password hint (if set) | Variable |
+
+#### Password Verifier Structure (`.iwpv2`)
+
+```c
+typedef struct {
+    uint16_t version;        // Must be 2
+    uint16_t format;         // Must be 1
+    uint32_t iterations;     // PBKDF2 iteration count
+    uint8_t salt[16];        // Salt for key derivation
+    uint8_t iv[16];          // AES IV
+    uint8_t data[64];        // Encrypted verification block
+} IWPasswordVerifierData;
+```
+
+#### Encrypted IWA Structure
+
+Each encrypted `.iwa` file has this format:
+```
+[16 bytes IV][encrypted_bytes][20 bytes garbage]
+```
+After AES decryption, first 16 bytes are discarded (used as extra IV material), remaining bytes are Snappy-compressed IWA data.
+
+---
+
+### Detection Algorithm
+
+#### Modern Format Detection
+
+```
+1. Open .pages file as ZIP
+   │
+2. Check for .iwpv2 file in bundle root
+   │
+   ├── NOT FOUND → File is NOT encrypted (or uses different protection)
+   │
+   └── FOUND → Open and verify structure
+                ├── Size == 98 bytes?
+                ├── Bytes[0:2] == version 2?  (uint16 LE)
+                ├── Bytes[2:4] == format 1?   (uint16 LE)
+                │
+                ├── YES to all → File is ENCRYPTED
+                │
+                └── NO to any → File protection format unknown
+                                 (may still be encrypted with different method)
+```
+
+#### Legacy Format Detection
+
+```
+1. Format detected as Legacy (has index.xml or index.xml.gz in ZIP)
+   │
+2. Try normal legacy XML parsing
+   │
+3. If parsing fails:
+   │
+4. Check: Does ZIP contain index.xml or index.xml.gz?
+   │
+   ├── YES → File is CORRUPT (not encrypted)
+   │
+   └── NO  → File is ENCRYPTED (legacy whole-bundle encryption)
+```
+
+#### Complete Decision Flow
+
+```
+Open .pages file
+  │
+  ├─ Format detected as Modern
+  │   │
+  │   ├─ .iwpv2 exists? (98 bytes, v=2, f=1)
+  │   │   ├─ YES → ENCRYPTED (skip parsing)
+  │   │   │
+  │   │   └─ NO → Continue normal Modern parsing
+  │   │           │
+  │   │           ├─ Parse succeeds → Return result (IsEncrypted=false)
+  │   │           │
+  │   │           └─ Parse fails → Check .iwpv2 again (could be corrupted IWA + encryption)
+  │   │                     │
+  │   │                     ├─ .iwpv2 now found → ENCRYPTED
+  │   │                     │
+  │   │                     └─ .iwpv2 not found → ERROR (corrupt/unknown)
+  │   │
+  │   └─ Snappy decode fails?
+  │       ├─ YES → Could be encrypted IWA (check .iwpv2)
+  │       └─ NO → Continue normal parsing
+  │
+  └─ Format detected as Legacy
+      │
+      ├─ Parsing succeeds → Return result (IsEncrypted=false)
+      │
+      └─ Parsing fails
+          │
+          ├─ index.xml or index.xml.gz exists? → ERROR (corrupt file)
+          │
+          └─ Neither exists → ENCRYPTED (whole-bundle encryption)
+```
+
+---
+
+### Visual Comparison
+
+#### Unencrypted Modern .pages Structure
+
+```
+DocumentName.pages/
+├── Data/                    # Images, videos (NOT encrypted)
+├── Index.zip                # Contains valid IWA files
+│   ├── Document.iwa         # Starts with Snappy header (0x01 or 0xff)
+│   └── ...
+├── Metadata/                 # Document metadata (NOT encrypted)
+└── preview.jpg
+```
+
+#### Encrypted Modern .pages Structure
+
+```
+DocumentName.pages/
+├── Data/                    # Images, videos (NOT encrypted)
+├── Index.zip                # Contains encrypted .iwa files
+│   ├── Document.iwa         # Starts with 16-byte AES IV (NOT Snappy!)
+│   └── ...
+├── Metadata/                 # Document metadata (NOT encrypted)
+├── .iwpv2                   # ← ENCRYPTION INDICATOR (98 bytes)
+└── .iwph                    # ← PASSWORD HINT (if set)
+```
+
+---
+
+### Implementation Notes
+
+#### Primary Detection: `.iwpv2` File
+
+```go
+func DetectEncryption(pagesPath string) (bool, error) {
+    r, err := zip.OpenReader(pagesPath)
+    if err != nil {
+        return false, err
+    }
+    defer r.Close()
+
+    for _, f := range r.File {
+        if f.Name == ".iwpv2" {
+            rc, err := f.Open()
+            if err != nil {
+                return false, err
+            }
+            defer rc.Close()
+            data := make([]byte, 98)
+            n, err := rc.Read(data)
+            if n == 98 && data[0] == 2 && data[2] == 1 {
+                return true, nil  // Encrypted
+            }
+        }
+    }
+    return false, nil  // Not encrypted
+}
+```
+
+#### Encrypted IWA Header Check
+
+Valid IWA files start with Snappy chunk types:
+- `0x01` — compressed chunk
+- `0xff` — uncompressed chunk
+
+If `Document.iwa` first byte is neither `0x01` nor `0xff`, and `.iwpv2` exists, the file is likely encrypted.
+
+#### Legacy Fallback Logic
+
+```go
+// After parsing fails for legacy format:
+if format == FormatLegacyXML && parseError != nil {
+    hasIndexXML := false
+    for _, entry := range zipEntries {
+        if entry.Name == "index.xml" || entry.Name == "index.xml.gz" {
+            hasIndexXML = true
+            break
+        }
+    }
+    if !hasIndexXML {
+        return ENCRYPTED  // Legacy whole-bundle encryption
+    }
+    return ERROR  // Actually corrupt
+}
+```
+
+---
+
+### Summary Table
+
+| Detection Method | Modern | Legacy | Notes |
+|-----------------|--------|--------|-------|
+| `.iwpv2` file (98 bytes, v=2, f=1) | **YES** | N/A | Primary modern indicator |
+| `.iwph` file | Yes (if hint set) | N/A | Secondary, optional |
+| IWA doesn't start with Snappy header | Yes | N/A | Confirmatory only |
+| `index.xml` missing on legacy parse failure | N/A | **YES** | Primary legacy indicator |
+| Protobuf message fields | **None** | **None** | Encryption is file-level |
+
+---
+
+## 11. Implementation Checklist
 
 - [x] Extract `Index.zip` from .pages bundle
 - [x] Decode Snappy compression for each .iwa file
