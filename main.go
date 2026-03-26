@@ -42,9 +42,10 @@ func main() {
 	var pagesFiles []string
 	var basePath string
 	var err error
+	var dirErrors []string
 
 	if *filelistFlag != "" {
-		pagesFiles, err = readFilelist(*filelistFlag)
+		pagesFiles, dirErrors, err = readFilelist(*filelistFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading filelist: %v\n", err)
 			os.Exit(1)
@@ -152,6 +153,9 @@ func main() {
 	var rows []row
 	var errors []errorResult
 	var modernCount, legacyCount, encryptedCount int
+	for _, dir := range dirErrors {
+		errors = append(errors, errorResult{filepath: dir, message: "path is a directory, not a .pages file (extracted bundle?)"})
+	}
 	for res := range results {
 		bar.Add(1)
 		if res.err != nil {
@@ -283,14 +287,20 @@ func findPagesFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
-func readFilelist(path string) ([]string, error) {
+type fileListEntry struct {
+	path  string
+	isDir bool
+}
+
+func readFilelist(path string) ([]string, []string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer file.Close()
 
 	var files []string
+	var dirErrors []string
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -300,12 +310,21 @@ func readFilelist(path string) ([]string, error) {
 		if !strings.HasSuffix(line, ".pages") {
 			continue
 		}
+		info, err := os.Stat(line)
+		if err != nil {
+			files = append(files, line)
+			continue
+		}
+		if info.IsDir() {
+			dirErrors = append(dirErrors, line)
+			continue
+		}
 		files = append(files, line)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return files, nil
+	return files, dirErrors, nil
 }
 
 func csvQuote(s string) string {
