@@ -9,3 +9,6 @@ bin/
 # Build artifacts
 *.zip
 iwork-redline-detector-*
+
+# Worktrees
+.worktrees/
