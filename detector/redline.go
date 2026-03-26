@@ -666,7 +666,7 @@ func isEncryptionError(err error) bool {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	indicators := []string{"password", "encrypted", "unsupported compression", "crypto", "invalid header", "invalid pkcs7", "decryption", "authentication"}
+	indicators := []string{"password", "encrypted", "unsupported compression", "crypto", "invalid header", "invalid pkcs7", "decryption", "authentication", "snappy: corrupt", "corrupt"}
 	for _, indicator := range indicators {
 		if strings.Contains(msg, indicator) {
 			return true
