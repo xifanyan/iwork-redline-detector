@@ -346,34 +346,41 @@ comments.no-tracking.pages      true      Modern
 track.not-accepted.pages        true      Modern  
 deletion.track-paused.pages     true      Modern  
 tracking.insert.deletion.pages  true      Modern  
+encrypted.pages                             Modern  
 ```
 
 **Debug mode** (aligned table, all columns):
 ```
-FILEPATH                        REDLINES  INSERTIONS  DELETIONS  COMMENTS      SOURCE    STATUS                  CONF  FORMAT     
-normal.pages                    false     20          1                                 Disabled                High  Modern     
-comments.no-tracking.pages      true      20          1          Comments (1)  Comments  Paused                  High  Modern     
-track.not-accepted.pages        true      22          1                       Tracked Changes  Enabled (With Changes)  High  Modern     
-pages09/normal.pages            false     0           0                                 Disabled                High  Pages '09  
-pages09/comments.no-tracking.pages  true  0           0          Comments (1)  Comments  Paused                  High  Pages '09  
+FILEPATH                        REDLINES  INSERTIONS  DELETIONS  COMMENTS      SOURCE    STATUS                  CONF  FORMAT     ENCRYPTED
+normal.pages                    false     20          1                                 Disabled                High  Modern     false
+comments.no-tracking.pages      true      20          1          Comments (1)  Comments  Paused                  High  Modern     false
+track.not-accepted.pages        true      22          1                       Tracked Changes  Enabled (With Changes)  High  Modern     false
+pages09/normal.pages            false     0           0                                 Disabled                High  Pages '09  false
+pages09/comments.no-tracking.pages  true  0           0          Comments (1)  Comments  Paused                  High  Pages '09  false
+encrypted.pages                                        -                                  -                        -     Modern     true
 ```
+
+**Encrypted files** show empty REDLINES field since content cannot be analyzed. The actual format (Modern/Legacy) is preserved when detectable.
 
 **CSV output** (when `-csv <filename>` is specified):
 ```csv
-filepath,redlines,insertions,deletions,comments,source,status,conf,format
-normal.pages,false,20,1,,,Disabled,High,Modern
-comments.no-tracking.pages,true,20,1,Comments (1),Comments,Paused,High,Modern
-comments.track.pages,true,22,1,Comments (1),Tracked Changes + Comments,Enabled (With Changes),High,Modern
-track.not-accepted.pages,true,22,1,,Tracked Changes,Enabled (With Changes),High,Modern
-pages09/comments.no-tracking.pages,true,0,0,Comments (1),Comments,Paused,High,Pages '09
+filepath,redlines,encrypted,insertions,deletions,comments,source,status,conf,format
+normal.pages,false,false,20,1,,,Disabled,High,Modern
+comments.no-tracking.pages,true,false,20,1,Comments (1),Comments,Paused,High,Modern
+comments.track.pages,true,false,22,1,Comments (1),Tracked Changes + Comments,Enabled (With Changes),High,Modern
+track.not-accepted.pages,true,false,22,1,,Tracked Changes,Enabled (With Changes),High,Modern
+pages09/comments.no-tracking.pages,true,false,0,0,Comments (1),Comments,Paused,High,Pages '09
+encrypted.pages,,true,0,0,,,,,Modern
 ```
+
+Note: For encrypted files, `redlines` is empty (not `true` or `false`), `encrypted` is `true`, and all count/status fields are empty.
 
 **Progress Bar & Summary Report:**
 ```
 Processing 24436 file(s) with 2 thread(s)...
 
 Processing...  34% |█████████████| (8552/24436) [1m30s]
-Processed: 24423 | Errors: 13 | Modern: 1233 | Legacy: 1231
+Processed: 24423 | Errors: 13 | Encrypted: 5 | Modern: 1233 | Legacy: 1231
 ```
 
 **Errors CSV** (when errors occur, written to `errors.csv` by default or custom path):
@@ -447,6 +454,7 @@ When settings fields cannot be found, the detector falls back to heuristic detec
 - **Change records**: Individual change author/timestamp parsing not yet fully implemented
 - **Legal-grade detection**: For highest confidence, compare against a known-clean baseline document
 - **Format fallback**: When Modern format parsing fails and fallback to legacy XML succeeds, the reported format remains "Modern" (reflecting the detected structure), even though legacy parsing was used
+- **Encrypted files**: Password-protected iWork files cannot be analyzed. They are detected via `.iwpv2` file (modern) or "unsupported compression" errors (legacy) and reported with `encrypted=true` and empty `REDLINES` field. Content is not parsed.
 
 ## Related
 
