@@ -3,6 +3,7 @@ package detector
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -741,5 +742,21 @@ func TestDetectRedlines_InvalidPages_RemainsError(t *testing.T) {
 	_, err := DetectRedlines(tmpFile)
 	if err == nil {
 		t.Fatal("expected invalid file to remain an error")
+	}
+}
+
+func TestDetectRedlines_ExtractedPagesDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	extractedDir := filepath.Join(tmpDir, "extracted.pages")
+	if err := os.MkdirAll(extractedDir, 0755); err != nil {
+		t.Fatalf("failed to create temp directory: %v", err)
+	}
+
+	_, err := DetectRedlines(extractedDir)
+	if err == nil {
+		t.Fatal("DetectRedlines expected error for extracted directory")
+	}
+	if !errors.Is(err, ErrExtractedBundle) {
+		t.Fatalf("DetectRedlines error = %v, want ErrExtractedBundle", err)
 	}
 }

@@ -5,14 +5,18 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/golang/snappy"
 	"github.com/xifanyan/iwork-redline-detector/iwa"
 )
+
+var ErrExtractedBundle = errors.New("path is a directory, not a .pages file (extracted bundle?)")
 
 type Change struct {
 	Kind    int
@@ -59,6 +63,10 @@ type Author struct {
 }
 
 func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
+	if info, err := os.Stat(pagesPath); err == nil && info.IsDir() {
+		return nil, ErrExtractedBundle
+	}
+
 	result := &RedlineDetection{
 		Format:         FormatUnknown,
 		HighConfidence: false,

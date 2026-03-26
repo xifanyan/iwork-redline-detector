@@ -126,11 +126,6 @@ func main() {
 				}
 			}
 
-			if info, err := os.Stat(f); err == nil && info.IsDir() {
-				results <- result{file: f, relPath: relPath, detection: nil, err: fmt.Errorf("path is a directory, not a .pages file (extracted bundle?)")}
-				return
-			}
-
 			r, err := detector.DetectRedlines(f)
 			results <- result{file: f, relPath: relPath, detection: r, err: err}
 		}(file)
