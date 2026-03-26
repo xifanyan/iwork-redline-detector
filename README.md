@@ -454,7 +454,7 @@ When settings fields cannot be found, the detector falls back to heuristic detec
 - **Change records**: Individual change author/timestamp parsing not yet fully implemented
 - **Legal-grade detection**: For highest confidence, compare against a known-clean baseline document
 - **Format fallback**: When Modern format parsing fails and fallback to legacy XML succeeds, the reported format remains "Modern" (reflecting the detected structure), even though legacy parsing was used
-- **Encrypted files**: Password-protected iWork files cannot be analyzed. They are detected via `.iwpv2` file (modern) or "unsupported compression" errors (legacy) and reported with `encrypted=true` and empty `REDLINES` field. Content is not parsed.
+- **Encrypted files**: Password-protected iWork files cannot be analyzed. They are detected via `.iwpv2` file (modern), "snappy: corrupt" errors during decompression (modern), or "unsupported compression" errors (legacy). They are reported with `encrypted=true` and excluded from the `errors.csv` report. Content is not parsed.
 
 ## Related
 
