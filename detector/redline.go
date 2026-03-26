@@ -100,6 +100,10 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 
 	docData, err := extractDocumentIWA(pagesPath)
 	if err != nil {
+		if isEncryptionError(err) {
+			result.IsEncrypted = true
+			return result, nil
+		}
 		return nil, fmt.Errorf("failed to extract Document.iwa: %w", err)
 	}
 
@@ -109,6 +113,10 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 
 	decompressed, err := iwa.DecompressSnappy(docData)
 	if err != nil {
+		if isEncryptionError(err) {
+			result.IsEncrypted = true
+			return result, nil
+		}
 		return nil, fmt.Errorf("failed to decompress Document.iwa: %w", err)
 	}
 
@@ -657,8 +665,8 @@ func isEncryptionError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	indicators := []string{"password", "encrypted", "unsupported compression", "crypto", "invalid header"}
+	msg := strings.ToLower(err.Error())
+	indicators := []string{"password", "encrypted", "unsupported compression", "crypto", "invalid header", "invalid pkcs7", "decryption", "authentication"}
 	for _, indicator := range indicators {
 		if strings.Contains(msg, indicator) {
 			return true
