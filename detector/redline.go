@@ -170,6 +170,12 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 	result.HasComments = result.CommentCount > 0
 
 	iwaFile, err := iwa.ParseIWAFile(docData)
+	if err != nil {
+		if isEncryptionError(err) {
+			result.IsEncrypted = true
+			return result, nil
+		}
+	}
 	protobufParsed := err == nil
 	if protobufParsed {
 		if settingsMsgs, ok := iwaFile.Messages[TypeSettingsArchive]; ok && len(settingsMsgs) > 0 {
