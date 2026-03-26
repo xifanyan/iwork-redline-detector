@@ -681,3 +681,45 @@ func TestDetectRedlinesLegacyXML_MalformedArchive(t *testing.T) {
 		t.Fatal("DetectRedlines expected error for malformed legacy XML archive")
 	}
 }
+
+func TestDetectRedlines_ModernEncrypted(t *testing.T) {
+	pagesPath := filepath.Join("..", "testdata", "pages", "encrypted.pages")
+
+	result, err := DetectRedlines(pagesPath)
+	if err != nil {
+		t.Fatalf("DetectRedlines returned error: %v", err)
+	}
+	if !result.IsEncrypted {
+		t.Fatal("expected IsEncrypted=true")
+	}
+	if result.Format != FormatModernIWA {
+		t.Fatalf("Format = %v, want %v", result.Format, FormatModernIWA)
+	}
+}
+
+func TestDetectRedlines_LegacyEncrypted(t *testing.T) {
+	pagesPath := filepath.Join("..", "testdata", "pages09", "encrypted.pages")
+
+	result, err := DetectRedlines(pagesPath)
+	if err != nil {
+		t.Fatalf("DetectRedlines returned error: %v", err)
+	}
+	if !result.IsEncrypted {
+		t.Fatal("expected IsEncrypted=true")
+	}
+	if result.Format != FormatLegacyXML {
+		t.Fatalf("Format = %v, want %v", result.Format, FormatLegacyXML)
+	}
+}
+
+func TestDetectRedlines_InvalidPages_RemainsError(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "invalid.pages")
+	if err := os.WriteFile(tmpFile, []byte("not a zip file"), 0644); err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	_, err := DetectRedlines(tmpFile)
+	if err == nil {
+		t.Fatal("expected invalid file to remain an error")
+	}
+}
