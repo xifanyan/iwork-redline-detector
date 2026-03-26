@@ -3,7 +3,24 @@ package detector
 import (
 	"archive/zip"
 	"fmt"
+	"os"
 )
+
+func isZipFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	data := make([]byte, 4)
+	n, err := f.Read(data)
+	if err != nil || n < 4 {
+		return false
+	}
+
+	return data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x03 && data[3] == 0x04
+}
 
 type TrackChangesStatus int
 type FormatType int

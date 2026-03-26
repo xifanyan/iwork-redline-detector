@@ -7,7 +7,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -84,7 +83,7 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 	}
 
 	if format == FormatUnknown {
-		if _, err := os.Stat(pagesPath); err == nil {
+		if isZipFile(pagesPath) {
 			r, zipErr := zip.OpenReader(pagesPath)
 			if zipErr != nil {
 				result.IsEncrypted = true
