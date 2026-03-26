@@ -9,12 +9,13 @@
 
 ## 1. Format Overview
 
-Apple has used different document formats across iWork versions. The detector handles **3 active formats** (iWork '09 through modern):
+Apple has used different document formats across iWork versions. The detector handles **3 active formats** (iWork '09 through modern). An older **pre-'09 bundle format** (iWork '05-'08) also existed but is not currently handled:
 
 ### Format Comparison
 
 | Version | Year | Format | Structure |
 |---------|------|--------|-----------|
+| **iWork '05-'08** | 2005-2008 | Bundle (directory) | `index.xml` + preview images in package |
 | **iWork '09** | 2009 | ZIP | `index.xml` at root |
 | **iWork 2013** | 2013 | Package + ZIP | `Index.zip` with IWA files at root |
 | **iWork 2014+** | 2014+ | ZIP | `Index/Document.iwa` flat in ZIP |
@@ -82,6 +83,41 @@ DocumentName.pages (ZIP - NOT a package/folder)
 - Single flat ZIP file (not a package/folder)
 - `Index/` folder contains all IWA files directly
 - Current standard format for all iWork apps
+
+### Format 0: iWork '05-'08 (Legacy Bundle)
+
+```
+DocumentName.pages/ (Bundle - directory structure)
+├── index.xml              # Document data as XML
+├── index.xml.gz           # Compressed variant if present
+├── preview.jpg            # Thumbnail preview
+└── ...
+```
+
+**Characteristics:**
+- **Bundle format** (directory with `.pages` extension), not a flat ZIP like later versions
+- Renaming `.pages` to `.zip` on Windows revealed the internal structure
+- Contains `index.xml` with document data (plain XML, no IWA)
+- Preview images embedded inside
+- **Track changes were NOT supported in '05 and '06**
+- **Track changes WERE introduced in Pages 3.0 (iWork '08, 2007)**
+
+| Version | Year | Track Changes |
+|---------|------|---------------|
+| Pages 1.0 | 2005 | ❌ Not supported |
+| Pages 2.0 | 2006 | ❌ Not supported |
+| Pages 3.0 | 2007 (iWork '08) | ✅ **Introduced Change Tracking** |
+| Pages 4.0 | 2009 (iWork '09) | ✅ Supported |
+
+**Password Protection:**
+- Likely existed in '08 since it had track changes
+- Uses whole-bundle encryption (similar to legacy '09)
+- Cannot be opened without password
+
+**Current Support:**
+- Modern Pages (v5.5+) can open '06 and '08 formats
+- Pages '05 format is not supported by modern versions
+- The detector does not currently handle '05-'08 formats — files would be detected as `FormatUnknown` and marked `FormatEncrypted` if password-protected
 
 ### IWA File Format (Both Format 2 & 3)
 
