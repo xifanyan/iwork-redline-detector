@@ -654,6 +654,26 @@ func TestDetectFormat_PrefersModernWhenBothEntriesExist(t *testing.T) {
 	}
 }
 
+func TestDetectFormat_SpecialPagesWithIndexZip(t *testing.T) {
+	pagesPath := filepath.Join("..", "testdata", "pages", "special.pages")
+
+	if got := DetectFormat(pagesPath); got != FormatModernIWA {
+		t.Fatalf("DetectFormat(special.pages) = %v, want %v", got, FormatModernIWA)
+	}
+}
+
+func TestDetectRedlines_SpecialPagesNestedIndexZip(t *testing.T) {
+	pagesPath := filepath.Join("..", "testdata", "pages", "special.pages")
+
+	result, err := DetectRedlines(pagesPath)
+	if err != nil {
+		t.Fatalf("DetectRedlines(special.pages) returned error: %v", err)
+	}
+	if result.Format != FormatModernIWA {
+		t.Fatalf("DetectRedlines(special.pages) format = %v, want %v", result.Format, FormatModernIWA)
+	}
+}
+
 func TestDetectRedlinesLegacyXML_MalformedArchive(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "broken-legacy.pages")
 	file, err := os.Create(tmp)

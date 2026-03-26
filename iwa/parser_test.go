@@ -88,6 +88,7 @@ func TestExtractDocumentIWA(t *testing.T) {
 		{name: "tracking pages", filename: "track.not-accepted.pages", wantErr: false},
 		{name: "blank tracking pages", filename: "blank.track.pages", wantErr: false},
 		{name: "deletion pages", filename: "deletion.track-paused.pages", wantErr: false},
+		{name: "nested index zip pages", filename: "special.pages", wantErr: false},
 		{name: "nonexistent file", filename: "nonexistent.pages", wantErr: true},
 	}
 

@@ -400,7 +400,7 @@ func extractDocumentIWAFromZipData(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	for _, f := range r.File {
-		if f.Name == "Document.iwa" || f.Name == "index/Document.iwa" {
+		if f.Name == "Document.iwa" || f.Name == "index/Document.iwa" || f.Name == "Index/Document.iwa" {
 			rc, err := f.Open()
 			if err != nil {
 				return nil, err
