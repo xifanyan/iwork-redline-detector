@@ -138,7 +138,7 @@ func main() {
 
 	type row struct {
 		filePath       string
-		hasRedlines    bool
+		hasRedlines    *bool
 		encrypted      bool
 		insertionCount int
 		deletionCount  int
@@ -165,7 +165,7 @@ func main() {
 			encryptedCount++
 			rows = append(rows, row{
 				filePath:    res.relPath,
-				hasRedlines: false,
+				hasRedlines: nil,
 				encrypted:   true,
 				format:      d.Format.String(),
 			})
@@ -173,6 +173,7 @@ func main() {
 		}
 
 		hasRedlines := d.HasRedlines()
+		hasRedlinesPtr := &hasRedlines
 
 		comments := ""
 		if d.HasComments {
@@ -198,7 +199,7 @@ func main() {
 
 		rows = append(rows, row{
 			filePath:       res.relPath,
-			hasRedlines:    hasRedlines,
+			hasRedlines:    hasRedlinesPtr,
 			encrypted:      false,
 			insertionCount: d.InsertionCount,
 			deletionCount:  d.DeletionCount,
@@ -218,13 +219,13 @@ func main() {
 		if *debugFlag {
 			tbl := table.New("FILEPATH", "REDLINES", "ENCRYPTED", "INSERTIONS", "DELETIONS", "COMMENTS", "SOURCE", "STATUS", "CONF", "FORMAT")
 			for _, r := range rows {
-				tbl.AddRow(r.filePath, r.hasRedlines, r.encrypted, r.insertionCount, r.deletionCount, r.comments, r.redlineSource, r.status, r.confidence, r.format)
+				tbl.AddRow(r.filePath, formatRedlines(r.hasRedlines), r.encrypted, r.insertionCount, r.deletionCount, r.comments, r.redlineSource, r.status, r.confidence, r.format)
 			}
 			tbl.Print()
 		} else {
 			tbl := table.New("FILEPATH", "REDLINES", "FORMAT")
 			for _, r := range rows {
-				tbl.AddRow(r.filePath, r.hasRedlines, r.format)
+				tbl.AddRow(r.filePath, formatRedlines(r.hasRedlines), r.format)
 			}
 			tbl.Print()
 		}
@@ -239,8 +240,8 @@ func main() {
 		defer file.Close()
 		fmt.Fprintln(file, "filepath,redlines,encrypted,insertions,deletions,comments,source,status,conf,format")
 		for _, r := range rows {
-			fmt.Fprintf(file, "%s,%v,%v,%d,%d,%s,%s,%s,%s,%s\n",
-				csvQuote(r.filePath), r.hasRedlines, r.encrypted, r.insertionCount, r.deletionCount,
+			fmt.Fprintf(file, "%s,%s,%v,%d,%d,%s,%s,%s,%s,%s\n",
+				csvQuote(r.filePath), formatRedlines(r.hasRedlines), r.encrypted, r.insertionCount, r.deletionCount,
 				csvQuote(r.comments), csvQuote(r.redlineSource), csvQuote(r.status), csvQuote(r.confidence), csvQuote(r.format))
 		}
 	}
@@ -315,4 +316,14 @@ func csvQuote(s string) string {
 		return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
 	}
 	return s
+}
+
+func formatRedlines(b *bool) string {
+	if b == nil {
+		return ""
+	}
+	if *b {
+		return "true"
+	}
+	return "false"
 }
