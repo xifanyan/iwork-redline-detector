@@ -192,6 +192,10 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 }
 
 func DetectEncryption(pagesPath string) (bool, error) {
+	if info, err := os.Stat(pagesPath); err == nil && info.IsDir() {
+		return false, nil
+	}
+
 	r, err := zip.OpenReader(pagesPath)
 	if err != nil {
 		return false, err

@@ -128,6 +128,10 @@ func (f FormatType) String() string {
 }
 
 func DetectFormat(pagesPath string) FormatType {
+	if info, err := os.Stat(pagesPath); err == nil && info.IsDir() {
+		return FormatUnknown
+	}
+
 	r, err := zip.OpenReader(pagesPath)
 	if err != nil {
 		return FormatUnknown
