@@ -137,7 +137,7 @@ func DetectFormat(pagesPath string) FormatType {
 	hasModern := false
 	hasLegacy := false
 	for _, entry := range r.File {
-		if entry.Name == "Index/Document.iwa" {
+		if entry.Name == "Index/Document.iwa" || entry.Name == "Index.zip" {
 			hasModern = true
 		}
 		if entry.Name == "index.xml" || entry.Name == "index.xml.gz" {

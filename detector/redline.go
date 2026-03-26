@@ -376,7 +376,40 @@ func extractDocumentIWA(pagesPath string) ([]byte, error) {
 		}
 	}
 
+	for _, f := range r.File {
+		if f.Name == "Index.zip" {
+			rc, err := f.Open()
+			if err != nil {
+				return nil, err
+			}
+			data, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				return nil, err
+			}
+			return extractDocumentIWAFromZipData(data)
+		}
+	}
+
 	return nil, fmt.Errorf("Document.iwa not found")
+}
+
+func extractDocumentIWAFromZipData(data []byte) ([]byte, error) {
+	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range r.File {
+		if f.Name == "Document.iwa" || f.Name == "index/Document.iwa" {
+			rc, err := f.Open()
+			if err != nil {
+				return nil, err
+			}
+			defer rc.Close()
+			return io.ReadAll(rc)
+		}
+	}
+	return nil, fmt.Errorf("Document.iwa not found in Index.zip")
 }
 
 func extractAnnotationStorageIWA(pagesPath string) ([]byte, error) {
