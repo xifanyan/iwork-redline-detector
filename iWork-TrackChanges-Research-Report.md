@@ -9,29 +9,81 @@
 
 ## 1. Format Overview
 
-### Modern iWork (2013+, .pages / .numbers / .keynote)
+Apple has used different document formats across iWork versions. The detector handles **3 active formats** (iWork '09 through modern):
 
-iWork 2013+ uses a **bundle-based ZIP format**:
+### Format Comparison
+
+| Version | Year | Format | Structure |
+|---------|------|--------|-----------|
+| **iWork '09** | 2009 | ZIP | `index.xml` at root |
+| **iWork 2013** | 2013 | Package + ZIP | `Index.zip` with IWA files at root |
+| **iWork 2014+** | 2014+ | ZIP | `Index/Document.iwa` flat in ZIP |
+
+### Format 1: iWork '09 (Legacy XML)
 
 ```
-DocumentName.pages/
-├── Data/                        # Media files (images, videos)
-│   ├── thumb_*.jpg
-│   └── preview*.jpg
-├── Index.zip                    # All document data
-│   ├── Document.iwa             # Main content (text, styles, etc.)
-│   ├── DocumentStylesheet.iwa   # Styles
-│   ├── Metadata.iwa            # Document metadata
-│   ├── AnnotationAuthorStorage.iwa  # Author info for comments/markup
-│   └── Tables/                 # (Numbers only)
-│       └── *.iwa
-└── Metadata/
-    ├── BuildVersionHistory.plist
-    ├── DocumentIdentifier
-    └── Properties.plist
+DocumentName.pages (ZIP)
+├── index.xml              # All document data as XML (or index.xml.gz if compressed)
+├── bullet_*.pdf           # Embedded images
+├── buildVersionHistory.plist
+└── QuickLook/
+    └── Thumbnail.png
 ```
 
-### Inside Index.zip
+**Characteristics:**
+- Entire document in single `index.xml` file
+- Plain XML with Apple-specific namespaces (`sf:`, `wp:`, etc.)
+- No `.iwa` files
+- `index.xml.gz` variant if compressed with gzip
+
+### Format 2: iWork 2013 (Hybrid Package)
+
+```
+DocumentName.pages/ (Package - folder on disk, ZIP when shared)
+├── Index.zip              # Nested ZIP containing all IWA files
+│   ├── Document.iwa        # Main content at ROOT (not in Index/)
+│   ├── DocumentStylesheet.iwa
+│   ├── Metadata.iwa
+│   ├── ViewState.iwa
+│   └── ...
+├── Metadata/
+│   ├── BuildVersionHistory.plist
+│   ├── DocumentIdentifier
+│   └── Properties.plist
+└── preview.jpg
+```
+
+**Characteristics:**
+- Outer container is a **package** (folder visible in Finder)
+- `Index.zip` is nested inside the package
+- **Key difference from 2014+:** IWA files are at the **root** of `Index.zip`, not in an `Index/` subfolder
+- This was a transitional format during Apple's migration from XML to IWA
+
+### Format 3: iWork 2014+ (Modern Flat ZIP)
+
+```
+DocumentName.pages (ZIP - NOT a package/folder)
+├── Index/                 # Flat folder structure
+│   ├── Document.iwa       # Main content
+│   ├── DocumentStylesheet.iwa
+│   ├── Metadata.iwa
+│   ├── ViewState.iwa
+│   ├── AnnotationAuthorStorage-*.iwa
+│   └── ...
+├── Metadata/
+│   ├── BuildVersionHistory.plist
+│   ├── DocumentIdentifier
+│   └── Properties.plist
+├── Data/                  # Media files (images, videos)
+└── preview.jpg
+```
+
+**Characteristics:**
+- Single flat ZIP file (not a package/folder)
+- `Index/` folder contains all IWA files directly
+- Current standard format for all iWork apps
+
+### IWA File Format (Both Format 2 & 3)
 
 Each `.iwa` (iWork Archive) file uses a two-layer format:
 1. **Snappy compression** (Google's framing format, but without CRC-32C checksums or stream identifier chunk)
@@ -43,9 +95,23 @@ IWA file = [Snappy chunk headers + compressed data] → [Protobuf stream]
 Protobuf stream = [ArchiveInfo (metadata)] → [MessageInfo × N] → [Payload × N]
 ```
 
-### Older iWork '09 (Pre-2013, XML-based)
+### Extraction Logic
 
-iWork '09 used **raw XML** inside ZIP bundles — `index.xml` or `index.xml.gz`. The complete schema was never made public by Apple, but the legacy samples in this repository are structured enough to inspect Apple-specific XML namespaces directly.
+The detector handles all formats automatically:
+
+```go
+// Detection priority (from DetectFormat):
+// 1. Check for index.xml or index.xml.gz → FormatLegacyXML (Format 1)
+// 2. Check for Index/Document.iwa → FormatModernIWA (Format 3)
+// 3. Check for Index.zip → FormatModernIWA (Format 2)
+
+// Extraction (from extractDocumentIWA):
+// 1. Try Index/Document.iwa directly (Format 3)
+// 2. Fall back to reading Index.zip and looking for:
+//    - Document.iwa at root (Format 2)
+//    - Index/Document.iwa inside Index.zip (variant of Format 2)
+//    - index/Document.iwa (lowercase variant)
+```
 
 ---
 
@@ -577,18 +643,19 @@ obriensp/iWorkFileFormat/iWorkFileInspector/
 
 ### Overview
 
-iWork Pages documents support password protection/encryption. The encryption mechanism differs between modern and legacy formats:
+iWork Pages documents support password protection/encryption. The encryption mechanism differs between formats:
 
 | Format | Encryption Method | Detection Approach |
 |--------|-------------------|-------------------|
-| **Modern** (2013+) | Individual files in `Index.zip` encrypted with AES128-CBC | Check for `.iwpv2` file |
-| **Legacy** (iWork '09) | Entire ZIP archive encrypted as single unit | Check for missing `index.xml` |
+| **Format 1** (iWork '09) | Entire ZIP archive encrypted as single unit | Check for missing `index.xml` |
+| **Format 2** (iWork 2013) | Individual files in `Index.zip` encrypted with AES128-CBC | Check for `.iwpv2` file |
+| **Format 3** (iWork 2014+) | Individual files in `Index/` encrypted with AES128-CBC | Check for `.iwpv2` file |
 
 **Important:** There are **no protobuf message fields** that indicate encryption status. Encryption is handled entirely at the file/bundle level.
 
 ---
 
-### Modern Format Encryption
+### Formats 2 & 3: IWA-Based Encryption (2013+)
 
 #### How It Works
 
@@ -706,24 +773,35 @@ Open .pages file
 
 ### Visual Comparison
 
-#### Unencrypted Modern .pages Structure
+#### Unencrypted Format 2 (iWork 2013) Structure
 
 ```
 DocumentName.pages/
-├── Data/                    # Images, videos (NOT encrypted)
-├── Index.zip                # Contains valid IWA files
+├── Index.zip                # Contains valid IWA files at root
 │   ├── Document.iwa         # Starts with Snappy header (0x01 or 0xff)
 │   └── ...
-├── Metadata/                 # Document metadata (NOT encrypted)
+├── Metadata/
 └── preview.jpg
 ```
 
-#### Encrypted Modern .pages Structure
+#### Unencrypted Format 3 (iWork 2014+) Structure
+
+```
+DocumentName.pages (ZIP)
+├── Index/                    # Contains valid IWA files
+│   ├── Document.iwa         # Starts with Snappy header (0x01 or 0xff)
+│   └── ...
+├── Metadata/
+├── Data/
+└── preview.jpg
+```
+
+#### Encrypted Format 2/3 Structure
 
 ```
 DocumentName.pages/
 ├── Data/                    # Images, videos (NOT encrypted)
-├── Index.zip                # Contains encrypted .iwa files
+├── Index.zip or Index/      # Contains encrypted .iwa files
 │   ├── Document.iwa         # Starts with 16-byte AES IV (NOT Snappy!)
 │   └── ...
 ├── Metadata/                 # Document metadata (NOT encrypted)

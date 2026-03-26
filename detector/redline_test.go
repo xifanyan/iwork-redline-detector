@@ -654,23 +654,18 @@ func TestDetectFormat_PrefersModernWhenBothEntriesExist(t *testing.T) {
 	}
 }
 
-func TestDetectFormat_SpecialPagesWithIndexZip(t *testing.T) {
-	pagesPath := filepath.Join("..", "testdata", "pages", "special.pages")
-
-	if got := DetectFormat(pagesPath); got != FormatModernIWA {
-		t.Fatalf("DetectFormat(special.pages) = %v, want %v", got, FormatModernIWA)
-	}
-}
-
-func TestDetectRedlines_SpecialPagesNestedIndexZip(t *testing.T) {
-	pagesPath := filepath.Join("..", "testdata", "pages", "special.pages")
+func TestDetectRedlines_Format2013_IndexZipWithFilesAtRoot(t *testing.T) {
+	pagesPath := filepath.Join("..", "testdata", "pages2013", "normal.pages2013.pages")
 
 	result, err := DetectRedlines(pagesPath)
 	if err != nil {
-		t.Fatalf("DetectRedlines(special.pages) returned error: %v", err)
+		t.Fatalf("DetectRedlines(Format2013) returned error: %v", err)
 	}
 	if result.Format != FormatModernIWA {
-		t.Fatalf("DetectRedlines(special.pages) format = %v, want %v", result.Format, FormatModernIWA)
+		t.Fatalf("DetectRedlines(Format2013) format = %v, want %v", result.Format, FormatModernIWA)
+	}
+	if result.TrackChangesStatus == TCStatusUnknown {
+		t.Fatalf("DetectRedlines(Format2013) unexpected unknown status")
 	}
 }
 
