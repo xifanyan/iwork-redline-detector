@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang/snappy"
 	"github.com/xifanyan/iwork-redline-detector/iwa"
 )
 
@@ -172,6 +171,17 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 	annotationData, err := extractAnnotationStorageIWA(pagesPath)
 	if err == nil && len(annotationData) > 4 {
 		result.Authors = extractAuthorsFromData(annotationData)
+		if commentCount := detectCommentsFromAnnotationStorage(annotationData); commentCount > result.CommentCount {
+			result.CommentCount = commentCount
+			result.HasComments = commentCount > 0
+		}
+	}
+
+	if result.Format == FormatPages2013 {
+		if commentCount := detectCommentsFromAllIWAFiles(pagesPath); commentCount > result.CommentCount {
+			result.CommentCount = commentCount
+			result.HasComments = commentCount > 0
+		}
 	}
 
 	return result, nil
@@ -439,7 +449,44 @@ func extractIndexIWAByPrefix(pagesPath string, prefix string) ([]byte, error) {
 		}
 	}
 
+	for _, f := range r.File {
+		if f.Name == "Index.zip" {
+			rc, err := f.Open()
+			if err != nil {
+				return nil, err
+			}
+			data, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				return nil, err
+			}
+			return extractIWAFromZipData(data, prefix)
+		}
+	}
+
 	return nil, fmt.Errorf("%s.iwa not found", prefix)
+}
+
+func extractIWAFromZipData(data []byte, prefix string) ([]byte, error) {
+	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range r.File {
+		name := f.Name
+		if strings.HasPrefix(name, "Index/") {
+			name = strings.TrimPrefix(name, "Index/")
+		}
+		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, ".iwa") {
+			rc, err := f.Open()
+			if err != nil {
+				return nil, err
+			}
+			defer rc.Close()
+			return io.ReadAll(rc)
+		}
+	}
+	return nil, fmt.Errorf("%s.iwa not found in Index.zip", prefix)
 }
 
 func detectTrackChangesHeuristic(data []byte) (hasTrackChanges bool, insertions, deletions int) {
@@ -461,9 +508,9 @@ func extractAuthorsFromData(data []byte) []Author {
 		return nil
 	}
 
-	decoded, err := snappy.Decode(nil, data[4:])
+	decoded, err := iwa.DecompressSnappy(data)
 	if err != nil {
-		return nil
+		decoded = data
 	}
 
 	var authors []Author
@@ -476,6 +523,39 @@ func extractAuthorsFromData(data []byte) []Author {
 	}
 
 	return authors
+}
+
+func detectCommentsFromAnnotationStorage(data []byte) int {
+	if len(data) < 4 {
+		return 0
+	}
+
+	decompressed, err := iwa.DecompressSnappy(data)
+	if err != nil {
+		return 0
+	}
+
+	info, err := iwa.ReadArchiveInfo(decompressed)
+	if err != nil || info == nil || len(info.MessageInfos) == 0 {
+		return 0
+	}
+
+	commentTypes := []uint64{
+		TypeCommentStorage,
+		TypeCommentInfo,
+		TypeDrawableInfoComment,
+	}
+
+	count := 0
+	for _, mi := range info.MessageInfos {
+		for _, ct := range commentTypes {
+			if mi.Type == ct {
+				count++
+			}
+		}
+	}
+
+	return count
 }
 
 func countPattern(data, pattern []byte) int {
@@ -717,4 +797,57 @@ func (r *RedlineDetection) HasRedlines() bool {
 		return false
 	}
 	return (r.SettingEnabled && r.TrackedChangesPresent) || r.HasComments
+}
+
+func detectCommentsFromAllIWAFiles(pagesPath string) int {
+	r, err := zip.OpenReader(pagesPath)
+	if err != nil {
+		return 0
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		if f.Name == "Index.zip" {
+			rc, err := f.Open()
+			if err != nil {
+				return 0
+			}
+			data, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				return 0
+			}
+
+			indexZip, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+			if err != nil {
+				return 0
+			}
+
+			count := 0
+			for _, innerFile := range indexZip.File {
+				if strings.HasSuffix(innerFile.Name, ".iwa") && !strings.Contains(innerFile.Name, "__MACOSX") {
+					iwaData, err := innerFile.Open()
+					if err != nil {
+						continue
+					}
+					iwaBytes, err := io.ReadAll(iwaData)
+					iwaData.Close()
+					if err != nil {
+						continue
+					}
+
+					decompressed, err := iwa.DecompressSnappy(iwaBytes)
+					if err != nil {
+						continue
+					}
+
+					if looksLikeCommentContent(string(decompressed)) {
+						count++
+					}
+				}
+			}
+			return count
+		}
+	}
+	return 0
 }

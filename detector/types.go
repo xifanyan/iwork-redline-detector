@@ -36,6 +36,7 @@ const (
 const (
 	FormatUnknown FormatType = iota
 	FormatModernIWA
+	FormatPages2013
 	FormatLegacyXML
 	FormatEncrypted
 )
@@ -118,6 +119,8 @@ func (f FormatType) String() string {
 	switch f {
 	case FormatModernIWA:
 		return "Modern"
+	case FormatPages2013:
+		return "Pages 2013"
 	case FormatLegacyXML:
 		return "Pages '09"
 	case FormatEncrypted:
@@ -134,19 +137,26 @@ func DetectFormat(pagesPath string) FormatType {
 	}
 	defer r.Close()
 
-	hasModern := false
+	hasIndexDocument := false
+	hasIndexZip := false
 	hasLegacy := false
 	for _, entry := range r.File {
-		if entry.Name == "Index/Document.iwa" || entry.Name == "Index.zip" {
-			hasModern = true
+		if entry.Name == "Index/Document.iwa" {
+			hasIndexDocument = true
+		}
+		if entry.Name == "Index.zip" {
+			hasIndexZip = true
 		}
 		if entry.Name == "index.xml" || entry.Name == "index.xml.gz" {
 			hasLegacy = true
 		}
 	}
 
-	if hasModern {
+	if hasIndexDocument {
 		return FormatModernIWA
+	}
+	if hasIndexZip {
+		return FormatPages2013
 	}
 	if hasLegacy {
 		return FormatLegacyXML

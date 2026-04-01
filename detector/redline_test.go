@@ -661,8 +661,8 @@ func TestDetectRedlines_Format2013_IndexZipWithFilesAtRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DetectRedlines(Format2013) returned error: %v", err)
 	}
-	if result.Format != FormatModernIWA {
-		t.Fatalf("DetectRedlines(Format2013) format = %v, want %v", result.Format, FormatModernIWA)
+	if result.Format != FormatPages2013 {
+		t.Fatalf("DetectRedlines(Format2013) format = %v, want %v", result.Format, FormatPages2013)
 	}
 	if result.TrackChangesStatus == TCStatusUnknown {
 		t.Fatalf("DetectRedlines(Format2013) unexpected unknown status")
