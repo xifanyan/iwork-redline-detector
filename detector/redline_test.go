@@ -655,7 +655,7 @@ func TestDetectFormat_PrefersModernWhenBothEntriesExist(t *testing.T) {
 }
 
 func TestDetectRedlines_Format2013_IndexZipWithFilesAtRoot(t *testing.T) {
-	pagesPath := filepath.Join("..", "testdata", "pages2013", "normal.pages2013.pages")
+	pagesPath := filepath.Join("..", "testdata", "pages2013", "normal.2013.pages")
 
 	result, err := DetectRedlines(pagesPath)
 	if err != nil {
