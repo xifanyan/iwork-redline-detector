@@ -163,6 +163,9 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 	}
 
 	result.CommentCount = detectCommentsInData(decompressed)
+	if commentCount := detectCommentsFromModernBundle(pagesPath); commentCount > result.CommentCount {
+		result.CommentCount = commentCount
+	}
 	result.HasComments = result.CommentCount > 0
 
 	if protobufParsed {
@@ -530,6 +533,93 @@ func detectTrackChangesFromParsedRecords(iwaFile *iwa.IWAFile) (hasTrackChanges 
 	return insertions > 0 || deletions > 0, insertions, deletions
 }
 
+func detectCommentsFromParsedRecords(iwaFile *iwa.IWAFile) int {
+	if iwaFile == nil {
+		return 0
+	}
+
+	commentCount := len(iwaFile.ByType[TypeHighlight])
+	if commentCount > 0 {
+		return commentCount
+	}
+
+	count := 0
+	for _, typeID := range []uint64{TypeCommentStorage, TypeCommentInfo, TypeDrawableInfoComment} {
+		count += len(iwaFile.ByType[typeID])
+	}
+
+	return count
+}
+
+func detectCommentsFromPages2013ParsedRecords(iwaFile *iwa.IWAFile) int {
+	if iwaFile == nil {
+		return 0
+	}
+
+	count := 0
+	commentStorageRecords := iwaFile.ByType[TypeCommentStorage]
+	for _, record := range commentStorageRecords {
+		if record == nil || record.Parsed == nil {
+			continue
+		}
+		if len(record.Parsed.FieldsByNumber(4)) == 0 {
+			count++
+		}
+	}
+
+	if len(commentStorageRecords) > 0 {
+		return count
+	}
+
+	return detectCommentsFromParsedRecords(iwaFile)
+}
+
+func detectCommentsFromModernBundle(pagesPath string) int {
+	r, err := zip.OpenReader(pagesPath)
+	if err != nil {
+		return 0
+	}
+	defer r.Close()
+
+	documentCount := 0
+	extraCommentFiles := 0
+	for _, f := range r.File {
+		if f.FileInfo().IsDir() || !strings.HasPrefix(f.Name, "Index/") || !strings.HasSuffix(f.Name, ".iwa") {
+			continue
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		data, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			continue
+		}
+
+		parsed, err := iwa.ParseIWAFile(data)
+		if err != nil {
+			continue
+		}
+
+		if f.Name == "Index/Document.iwa" {
+			documentCount = detectCommentsFromParsedRecords(parsed)
+			continue
+		}
+
+		if len(parsed.ByType[TypeCommentStorage]) > 0 {
+			extraCommentFiles++
+		}
+	}
+
+	if documentCount > 0 || extraCommentFiles > 0 {
+		return documentCount + extraCommentFiles
+	}
+
+	return 0
+}
+
 func extractAuthorsFromData(data []byte) []Author {
 	if len(data) < 4 {
 		return nil
@@ -557,32 +647,12 @@ func detectCommentsFromAnnotationStorage(data []byte) int {
 		return 0
 	}
 
-	decompressed, err := iwa.DecompressSnappy(data)
+	parsed, err := iwa.ParseIWAFile(data)
 	if err != nil {
 		return 0
 	}
 
-	info, err := iwa.ReadArchiveInfo(decompressed)
-	if err != nil || info == nil || len(info.MessageInfos) == 0 {
-		return 0
-	}
-
-	commentTypes := []uint64{
-		TypeCommentStorage,
-		TypeCommentInfo,
-		TypeDrawableInfoComment,
-	}
-
-	count := 0
-	for _, mi := range info.MessageInfos {
-		for _, ct := range commentTypes {
-			if mi.Type == ct {
-				count++
-			}
-		}
-	}
-
-	return count
+	return detectCommentsFromParsedRecords(parsed)
 }
 
 func countPattern(data, pattern []byte) int {
@@ -851,6 +921,7 @@ func detectCommentsFromAllIWAFiles(pagesPath string) int {
 			}
 
 			count := 0
+			parsedAny := false
 			for _, innerFile := range indexZip.File {
 				if strings.HasSuffix(innerFile.Name, ".iwa") && !strings.Contains(innerFile.Name, "__MACOSX") {
 					iwaData, err := innerFile.Open()
@@ -863,13 +934,19 @@ func detectCommentsFromAllIWAFiles(pagesPath string) int {
 						continue
 					}
 
+					if parsed, err := iwa.ParseIWAFile(iwaBytes); err == nil {
+						parsedAny = true
+						count += detectCommentsFromPages2013ParsedRecords(parsed)
+						continue
+					}
+
 					decompressed, err := iwa.DecompressSnappy(iwaBytes)
 					if err != nil {
 						continue
 					}
 
-					if looksLikeCommentContent(string(decompressed)) {
-						count++
+					if !parsedAny {
+						count += detectCommentsInData(decompressed)
 					}
 				}
 			}

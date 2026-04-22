@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/xifanyan/iwork-redline-detector/iwa"
 )
 
 func TestDetectRedlines(t *testing.T) {
@@ -513,6 +515,138 @@ func TestDetectCommentsInData_CountsPrintableCommentSegmentsWithMarkers(t *testi
 	}
 }
 
+func TestDetectCommentsFromParsedRecords(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		want     int
+	}{
+		{name: "normal document", filename: filepath.Join("..", "testdata", "pages", "normal.pages"), want: 0},
+		{name: "comment only", filename: filepath.Join("..", "testdata", "pages", "comments.no-tracking.pages"), want: 1},
+		{name: "comment with tracking", filename: filepath.Join("..", "testdata", "pages", "comments.track.pages"), want: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			documentData, err := extractDocumentIWA(tt.filename)
+			if err != nil {
+				t.Fatalf("extractDocumentIWA returned error: %v", err)
+			}
+
+			parsed, err := iwa.ParseIWAFile(documentData)
+			if err != nil {
+				t.Fatalf("ParseIWAFile returned error: %v", err)
+			}
+
+			if got := detectCommentsFromParsedRecords(parsed); got != tt.want {
+				t.Fatalf("detectCommentsFromParsedRecords() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectRedlines_ReportedCommentSampleCountsStructuredComments(t *testing.T) {
+	pagesPath := filepath.Join("..", "..", "pages", "0010h000000006517647.pages")
+	if _, err := os.Stat(pagesPath); err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("skipping reported comment sample: %v", err)
+		}
+		t.Fatalf("failed to stat sample: %v", err)
+	}
+
+	result, err := DetectRedlines(pagesPath)
+	if err != nil {
+		t.Fatalf("DetectRedlines returned error: %v", err)
+	}
+	if !result.HasComments {
+		t.Fatal("HasComments = false, want true")
+	}
+	if result.CommentCount != 79 {
+		t.Fatalf("CommentCount = %d, want 79", result.CommentCount)
+	}
+	if result.InsertionCount != 239 {
+		t.Fatalf("InsertionCount = %d, want 239", result.InsertionCount)
+	}
+	if result.DeletionCount != 209 {
+		t.Fatalf("DeletionCount = %d, want 209", result.DeletionCount)
+	}
+}
+
+func TestDetectRedlines_SecondReportedCommentSampleHasComments(t *testing.T) {
+	pagesPath := filepath.Join("..", "..", "pages", "0010h000000006517291.pages")
+	if _, err := os.Stat(pagesPath); err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("skipping second reported comment sample: %v", err)
+		}
+		t.Fatalf("failed to stat sample: %v", err)
+	}
+
+	result, err := DetectRedlines(pagesPath)
+	if err != nil {
+		t.Fatalf("DetectRedlines returned error: %v", err)
+	}
+	if !result.HasComments {
+		t.Fatal("HasComments = false, want true")
+	}
+	if result.CommentCount != 4 {
+		t.Fatalf("CommentCount = %d, want 4", result.CommentCount)
+	}
+	if result.InsertionCount != 633 {
+		t.Fatalf("InsertionCount = %d, want 633", result.InsertionCount)
+	}
+	if result.DeletionCount != 460 {
+		t.Fatalf("DeletionCount = %d, want 460", result.DeletionCount)
+	}
+}
+
+func TestDetectRedlines_ReportedPages2013CommentSampleCountsComments(t *testing.T) {
+	pagesPath := filepath.Join("..", "..", "pages", "0010h000000006518152.pages")
+	if _, err := os.Stat(pagesPath); err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("skipping reported Pages 2013 sample: %v", err)
+		}
+		t.Fatalf("failed to stat sample: %v", err)
+	}
+
+	result, err := DetectRedlines(pagesPath)
+	if err != nil {
+		t.Fatalf("DetectRedlines returned error: %v", err)
+	}
+	if result.Format != FormatPages2013 {
+		t.Fatalf("Format = %v, want %v", result.Format, FormatPages2013)
+	}
+	if result.CommentCount != 39 {
+		t.Fatalf("CommentCount = %d, want 39", result.CommentCount)
+	}
+	if !result.HasComments {
+		t.Fatal("HasComments = false, want true")
+	}
+}
+
+func TestDetectRedlines_ReportedPages2013FalsePositiveHasNoComments(t *testing.T) {
+	pagesPath := filepath.Join("..", "..", "pages", "0010h000000006517777.pages")
+	if _, err := os.Stat(pagesPath); err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("skipping reported Pages 2013 sample: %v", err)
+		}
+		t.Fatalf("failed to stat sample: %v", err)
+	}
+
+	result, err := DetectRedlines(pagesPath)
+	if err != nil {
+		t.Fatalf("DetectRedlines returned error: %v", err)
+	}
+	if result.Format != FormatPages2013 {
+		t.Fatalf("Format = %v, want %v", result.Format, FormatPages2013)
+	}
+	if result.CommentCount != 0 {
+		t.Fatalf("CommentCount = %d, want 0", result.CommentCount)
+	}
+	if result.HasComments {
+		t.Fatal("HasComments = true, want false")
+	}
+}
+
 func TestDetectFormat(t *testing.T) {
 	testdataDir := filepath.Join("..", "testdata")
 
@@ -775,8 +909,8 @@ func TestDetectRedlines_ModernCorruptDocumentRemainsError(t *testing.T) {
 
 	zw := zip.NewWriter(file)
 	entries := map[string][]byte{
-		"Index/Document.iwa":        []byte{0x00, 0x4F, 0x8B, 0x00, 0x80, 0x80, 0x04},
-		"Index/ViewState-1.iwa":     []byte{0x00, 0x01, 0x00, 0x00, 0x00},
+		"Index/Document.iwa":                []byte{0x00, 0x4F, 0x8B, 0x00, 0x80, 0x80, 0x04},
+		"Index/ViewState-1.iwa":             []byte{0x00, 0x01, 0x00, 0x00, 0x00},
 		"Index/AnnotationAuthorStorage.iwa": []byte{0x00, 0x01, 0x00, 0x00, 0x00},
 	}
 	for name, data := range entries {
