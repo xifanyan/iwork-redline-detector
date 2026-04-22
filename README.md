@@ -57,11 +57,15 @@ This project was built based on detailed research of the iWork file format. See 
 
 ### Supported Formats
 
-The tool automatically detects and handles two iWork file formats:
+The tool automatically detects and handles three iWork file formats:
 
-#### Modern IWA Format (.pages)
+#### Modern IWA Format (.pages, iWork 2014+)
 
-Modern `.pages` files use Apple's binary IWA (iWork Archive) format. Files are ZIP bundles containing `Index/Document.iwa` and other IWA payloads.
+Modern `.pages` files use Apple's binary IWA (iWork Archive) format. Files are ZIP bundles containing `Index/Document.iwa` and other IWA payloads directly in an `Index/` folder.
+
+#### Pages 2013 Format (.pages, iWork 2013)
+
+Pages 2013 files are a transitional format. They contain `Index.zip` at the bundle root, which itself contains IWA files (e.g., `Document.iwa`, `DocumentStylesheet.iwa`). This format was used during Apple's migration from XML to IWA.
 
 #### Legacy iWork '09 XML Format (.pages)
 
@@ -69,6 +73,7 @@ iWork '09 files use plain XML instead of IWA bundles. They contain a top-level `
 
 The tool detects the format automatically by inspecting ZIP entry names:
 - `Index/Document.iwa` → Modern IWA format
+- `Index.zip` → Pages 2013 format
 - `index.xml` / `index.xml.gz` → Legacy XML format
 
 #### Format Fallback
@@ -104,20 +109,30 @@ Priority: aggregate counts from `sf:text-changes` are used when available; other
 
 Comments are detected and reported independently from tracked insertions/deletions.
 
-- **Modern Pages**: detect comment-like payload text from decompressed `Document.iwa`
+- **Modern Pages (2014+)**: parsed `TSD.CommentStorageArchive` (type 3056) and `TSWP.HighlightArchive` (type 2013) records from `Document.iwa` and other IWA files in the bundle. When `AnnotationAuthorStorage.iwa` contains typed comment records, those are counted as well.
+- **Pages 2013**: parsed `TSD.CommentStorageArchive` records from IWA files inside `Index.zip`. Only records without field 4 (revision markers) are counted, which matches the visible comment count. Falls back to parsed `HighlightArchive` records when no `CommentStorageArchive` records exist, and to text heuristics only when IWA parsing fails entirely.
 - **Legacy Pages '09**: count `sf:annotation` elements in `index.xml`
 - **Combined reporting**: documents with both tracked changes and comments show both signals in debug output
 
 This keeps the `COMMENTS` column informative in every case while still treating either signal as sufficient for `REDLINES=true`.
 
-#### 4. Change Detection (Heuristic)
+#### 4. Change Detection
 
-The detector also scans for actual tracked changes using byte-pattern detection:
+The detector uses structured parsed records when IWA parsing succeeds, falling back to byte-pattern heuristics only when parsing fails:
 
-- **Insertion markers**: `0x08 0x01 0x12` - indicates inserted text
-- **Deletion markers**: `0x08 0x02 0x12` - indicates deleted text
+**Structured detection (primary):**
+When `iwa.ParseIWAFile()` succeeds, the detector counts typed `ChangeArchive` records (observed as type 2060 in real-world samples) by their `kind` field:
+- **Kind 1**: Insertions
+- **Kind 2**: Deletions
 
-Normal documents have ~20 insertion patterns from character styling, so we use thresholds:
+This eliminates false positives from unrelated protobuf structures that happen to match byte patterns.
+
+**Heuristic detection (fallback):**
+When IWA parsing fails, the detector scans decompressed bytes for byte-pattern markers:
+- **Insertion markers**: `0x08 0x01 0x12`
+- **Deletion markers**: `0x08 0x02 0x12`
+
+Thresholds for heuristic mode:
 - **Insertions > 21** → actual track changes detected
 - **Deletions > 1** → actual track changes detected
 
@@ -141,19 +156,24 @@ A `.pages` file is a ZIP archive:
 | Path | Description |
 |-------|-------------|
 | `DocumentName.pages/` | Root of .pages bundle |
-| `Index/` | Contains all document data |
+| `Index/` | Contains all document data (modern format) |
 | `Index/Document.iwa` | Main content + track changes settings |
 | `Index/DocumentStylesheet.iwa` | Document styles |
 | `Index/AnnotationAuthorStorage.iwa` | Author names and colors |
+| `Index.zip` | Nested ZIP containing IWA files (Pages 2013 format) |
 
 **2. Parse Document.iwa**
 The `Document.iwa` file contains:
 - **Snappy compression** - decompress to access raw data
 - **Protocol Buffers** - structured message format with type IDs
+- **IWA object stream** - repeated `varint length → ArchiveInfo → payload` objects
 - **Message types**:
   - `TP.DocumentArchive` (type 1002) - document settings
   - `TP.SettingsArchive` (type 1003) - markup visibility
   - `TSWP.TextStorageArchive` (type 1001) - actual text content
+  - `TSWP.ChangeArchive` (type ~2060 observed) - pending tracked changes
+  - `TSD.CommentStorageArchive` (type 3056) - comment records
+  - `TSWP.HighlightArchive` (type 2013) - highlight/comment anchor records
 
 **3. Read Track Changes Setting**
 Read the decompressed settings signals:
@@ -161,59 +181,50 @@ Read the decompressed settings signals:
 - **UIStateArchive field 28** (in ViewState*.iwa): Track Changes paused
 
 **4. Count Changes**
-Scan decompressed data for ChangeArchive patterns:
-- **Kind 1**: Insertions (underlined text)
-- **Kind 2**: Deletions (strikethrough text)
+When IWA parsing succeeds, count typed `ChangeArchive` records by `kind` field (1=insertion, 2=deletion). When parsing fails, fall back to byte-pattern heuristic scanning.
 
 **5. Determine Status**
 Combine settings and counts to produce the final track-changes status.
 
 **6. Detect Comments**
 Check for comments independently of tracked insertions/deletions:
-- Modern: comment-like payloads in `Document.iwa`
-- Legacy: `sf:annotation` elements in `index.xml`
+- **Modern**: parsed `CommentStorageArchive` and `HighlightArchive` records from IWA files
+- **Pages 2013**: parsed `CommentStorageArchive` records (without field 4) from IWA files inside `Index.zip`
+- **Legacy**: `sf:annotation` elements in `index.xml`
 
 Overall `REDLINES=true` when either tracked changes exist or comment-only redlines are found.
 
-**2. Compression**
+**7. Compression**
 The `Document.iwa` file is compressed using Google's Snappy algorithm. We decompress it to read the raw data.
 
-**3. Protobuf Structure**
-Inside the decompressed data, Pages uses Google's Protocol Buffers to organize information. Think of it like a structured database with:
-- **Fields** (like columns) identified by numbers
-- **Tags** that tell us field number + value type
+**8. Protobuf Structure**
+Inside the decompressed data, Pages uses Google's Protocol Buffers to organize information. The IWA object stream contains repeated `ArchiveInfo → MessageInfo → payload` objects, each tagged with a type ID.
 
-**4. Track Changes Markers**
-When you insert text with track changes ON, Pages adds a `ChangeArchive` record with this pattern:
-```
-08 01 12 ...
-```
-Where:
-- `08` = field 1 (kind = what type of change)
-- `01` = value 1 (means "insertion")
-- `12` = field 2 (session = who made the change)
+**9. Track Changes Markers**
+When track changes is in use, Pages stores `ChangeArchive` records (observed type 2060 in real-world samples) in the IWA object stream:
+- **kind = 1** → insertion (underlined text)
+- **kind = 2** → deletion (strikethrough text)
 
-For deletions, it's `08 02 12 ...` where `02` means "deletion".
+In heuristic fallback mode, these appear as byte patterns `08 01 12` (insertion) and `08 02 12` (deletion) in the decompressed data.
 
-**5. Counting**
-Our detector simply counts how many times these byte patterns appear:
-- If insertion markers > 21 (baseline threshold), flag as having redlines
-- If deletion markers > 1 (baseline threshold), flag as having redlines
+**10. Counting**
+When structured parsing succeeds, the detector counts typed records directly — no thresholds needed. When falling back to heuristic mode, it counts byte patterns and applies thresholds (insertions > 21, deletions > 1).
 
 ### Why Baselines?
 
-Normal documents already have ~20 of these patterns for regular text styling (not actual track changes). So we use a threshold approach rather than just "any found = redlines".
+When structured IWA parsing succeeds, no baselines or thresholds are needed — typed `ChangeArchive` records are counted directly. Baseline thresholds (insertions > 21, deletions > 1) are only used in heuristic fallback mode when IWA parsing fails. In heuristic mode, normal documents already have ~20 insertion-pattern matches from regular text styling, so the threshold avoids false positives.
 
 ### In Summary
 
 | Step | Description |
 |-------|-------------|
 | 1 | Open .pages file (ZIP format) |
-| 2 | Extract Index/Document.iwa |
-| 3 | Decompress with Snappy |
-| 4 | Scan for byte patterns (insertions/deletions) |
-| 5 | Compare to threshold (insertions > 21 OR deletions > 1) |
-| 6 | Return result: REDLINES or OK |
+| 2 | Detect format: Modern (Index/Document.iwa), Pages 2013 (Index.zip), or Legacy (index.xml) |
+| 3 | Extract and decompress Document.iwa |
+| 4 | Parse IWA object stream for typed records |
+| 5 | Count ChangeArchive records (structured) or scan byte patterns (heuristic fallback) |
+| 6 | Count CommentStorageArchive / HighlightArchive records for comments |
+| 7 | Return result: REDLINES or OK |
 
 ## Implementation
 
@@ -222,10 +233,10 @@ Normal documents already have ~20 of these patterns for regular text styling (no
 | Component | Description |
 |-----------|-------------|
 | `main.go` | CLI entry point, progress bar, batch processing, error handling |
-| `iwa/parser.go` | IWA file parsing (Snappy decompression + protobuf decoding) |
-| `detector/types.go` | Type ID mappings, field constants, TrackChangesStatus enum |
-| `detector/redline.go` | Redline detection logic + protobuf settings parsing |
-| `bin/iwork-redline-detector` | Compiled binary executable |
+| `iwa/parser.go` | IWA file parsing (Snappy decompression + protobuf decoding + object stream traversal) |
+| `detector/types.go` | Type ID mappings, field constants, TrackChangesStatus enum, format detection |
+| `detector/redline.go` | Redline detection logic + protobuf settings parsing + structured comment counting |
+| `bin/` | Compiled binary executables |
 
 **Project Structure:**
 
@@ -233,11 +244,17 @@ Normal documents already have ~20 of these patterns for regular text styling (no
   - `main.go`
   - `iwa/`
     - `parser.go`
+    - `parser_test.go`
   - `detector/`
     - `types.go`
     - `redline.go`
+    - `redline_test.go`
+  - `testdata/`
+    - `pages/`
+    - `pages09/`
+    - `pages2013/`
   - `bin/`
-    - `iwork-redline-detector` (platform-specific binaries)
+    - `release/` (platform-specific binaries)
 
 **CLI Features:**
 - Progress bar with elapsed time display
@@ -248,18 +265,23 @@ Normal documents already have ~20 of these patterns for regular text styling (no
 
 ### Detection Logic
 
-The detector combines **direct settings field reads** with **heuristic change counting**:
+The detector uses a **layered strategy**: structured IWA parsing first, byte-pattern heuristics as fallback.
 
-**Primary Signal (Settings Fields):**
+**Primary Signal (Structured Parsing):**
 ```go
-1. Decompress Document.iwa
-2. Read field 40 (change_tracking_enabled)
-3. Decompress ViewState*.iwa (contains UIStateArchive)
-4. Read field 28 from UIStateArchive (paused state)
-5. Result: Definitive current Track Changes mode
+1. Parse Document.iwa via IWA object stream (varint length → ArchiveInfo → payloads)
+2. Count typed ChangeArchive records (observed type 2060) by kind field
+   - kind == 1 → insertion
+   - kind == 2 → deletion
+3. Read field 40 (change_tracking_enabled) from decompressed data
+4. Read field 28 from ViewState*.iwa (paused state)
+5. Count comment records:
+   - HighlightArchive (type 2013) and CommentStorageArchive (type 3056)
+   - Pages 2013: CommentStorageArchive without field 4 (excludes revision records)
+6. Result: Accurate counts with no false positives from unrelated protobuf structures
 ```
 
-**Secondary Signal (Heuristic):**
+**Fallback Signal (Heuristic):**
 ```go
 1. Decompress Document.iwa with Snappy
 2. Scan for byte patterns:
@@ -267,12 +289,12 @@ The detector combines **direct settings field reads** with **heuristic change co
    - 0x08 0x02 0x12 = deletion marker
 3. Count occurrences
 4. Apply thresholds: insertions > 21 OR deletions > 1
-5. Result: Actual tracked changes present
+5. Result: Best-effort detection when structured parsing fails
 ```
 
 **Combination Logic:**
-- If settings fields are found → use them as the primary source of truth
-- If settings fields are unavailable → fall back to heuristic change detection
+- If IWA parsing succeeds → use typed record counts (no false positives from styling)
+- If IWA parsing fails → fall back to heuristic byte-pattern counting
 - Set `HighConfidence` when the current mode comes from document/view-state settings
 - Detect comments independently of tracked insertions/deletions
 - Treat comment-only documents as redlines without changing the track-changes status label
@@ -434,23 +456,30 @@ When settings fields cannot be found, the detector falls back to heuristic detec
 | deletion.track-paused.pages | 0 | 1 | 0 | true | Paused | Pages '09 |
 | tracking.insert.deletion.pages | 1 | 2 | 0 | true | Enabled (With Changes) | Pages '09 |
 
+### Pages 2013 Format (testdata/pages2013/)
+
+| File | Insertions | Deletions | Comments | Redlines | Status | Format |
+|------|------------|-----------|----------|----------|---------|--------|
+| normal.2013.pages | varies | varies | 0 | varies | varies | Pages 2013 |
+
 ## Technical Notes
 
 - **IWA files** use Snappy compression with 4-byte length prefix
+- **IWA object stream** is a repeated sequence of `varint length → ArchiveInfo → MessageInfo payloads`, not a single monolithic protobuf message
 - **Protobuf encoding** uses variable-length integers for field tags and values
-- **Type IDs**: Messages are identified by integer type IDs (e.g., 1002 = DocumentArchive)
-- **Field numbers**: Protocol buffer fields are identified by numbers (e.g., field 40 = change_tracking_enabled)
+- **Type IDs**: Messages are identified by integer type IDs (e.g., 1002 = DocumentArchive, 3056 = CommentStorageArchive)
+- **Field numbers**: Protocol buffer fields are identified by numbers (e.g., field 40 = change_tracking_enabled, field 4 presence in CommentStorageArchive = revision marker)
 - **Snappy framing**: Custom variant without CRC-32C checksums or stream identifier chunks
-- **Baseline false positives**: Normal documents have ~20 insertion patterns from character styling
+- **Structured vs heuristic**: Structured parsing counts typed records directly; heuristic byte-pattern scanning is a fallback with thresholds to avoid false positives from character styling
+- **Pages 2013 comment counting**: `CommentStorageArchive` records without field 4 correspond to visible comments; records with field 4 are revision/edit markers and are excluded
 
 ## Limitations
 
 - **Keynote and Numbers**: Only support comments/annotations, **not** inline track changes
-- **ArchiveInfo parsing**: Full typed-message traversal in `iwa/parser.go` is still incomplete for some IWA structures, so detailed message extraction remains limited.
-- **Heuristic threshold**: Modern format change detection uses insertion/deletion byte-pattern thresholds and may produce false positives on documents with unusual styling density.
+- **Heuristic threshold**: When structured IWA parsing fails, modern format change detection falls back to byte-pattern thresholds and may produce false positives on documents with unusual styling density.
 - **Legacy XML**: Heuristic scanning is not applied to iWork '09 files; change counts come from XML parsing only.
-- **Comments detection**: Comment redlines are supported for both modern Pages and legacy Pages '09, and comment status is reported even when tracked insertions/deletions also exist.
-- **Modern comments**: Current modern comment detection is based on observed payload text patterns in `Document.iwa`, not full typed comment-archive traversal yet.
+- **Comments detection**: Modern and Pages 2013 comments are counted from structured parsed records (`TSD.CommentStorageArchive`, `TSWP.HighlightArchive`). Legacy Pages '09 comments are counted from `sf:annotation` XML elements.
+- **Pages 2013 comments**: Counted from `CommentStorageArchive` records that lack field 4 (revision markers). In the rare case that IWA parsing fails entirely, a text-based heuristic fallback is used.
 - **Change records**: Individual change author/timestamp parsing not yet fully implemented
 - **Legal-grade detection**: For highest confidence, compare against a known-clean baseline document
 - **Format fallback**: When Modern format parsing fails and fallback to legacy XML succeeds, the reported format remains "Modern" (reflecting the detected structure), even though legacy parsing was used

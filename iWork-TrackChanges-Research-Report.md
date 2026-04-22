@@ -137,9 +137,9 @@ The detector handles all formats automatically:
 
 ```go
 // Detection priority (from DetectFormat):
-// 1. Check for index.xml or index.xml.gz → FormatLegacyXML (Format 1)
-// 2. Check for Index/Document.iwa → FormatModernIWA (Format 3)
-// 3. Check for Index.zip → FormatModernIWA (Format 2)
+// 1. Check for Index/Document.iwa → FormatModernIWA (Format 3)
+// 2. Check for Index.zip → FormatPages2013 (Format 2)
+// 3. Check for index.xml or index.xml.gz → FormatLegacyXML (Format 1)
 
 // Extraction (from extractDocumentIWA):
 // 1. Try Index/Document.iwa directly (Format 3)
@@ -381,26 +381,45 @@ message CommentStorageArchive {
   optional string text             = 1;   // Comment text content
   optional .TSP.Date creation_date = 2;   // When created
   optional .TSP.Reference author;               // → AnnotationAuthorStorage
+  // field 4 (when present) = revision/edit markers, NOT original comments
 }
 ```
 
+#### Structured Comment Counting (Modern & Pages 2013)
+
+The detector counts comments from parsed IWA records rather than text heuristics:
+
+**Modern Pages (2014+):**
+- Primary: `TSWP.HighlightArchive` (type 2013) record count from `Document.iwa`
+- Secondary: `TSD.CommentStorageArchive` (type 3056), `TSWP.CommentInfoArchive` (type 2014), and `TSD.DrawableInfoCommentCommandArchive` (type 3057) from all IWA files in the bundle
+- Also checks `AnnotationAuthorStorage.iwa` for additional comment records
+
+**Pages 2013:**
+- Parses each IWA file inside `Index.zip` via `iwa.ParseIWAFile()`
+- Counts `TSD.CommentStorageArchive` records that **lack field 4** — field 4 contains revision/edit markers that are not visible comments
+- Falls back to `HighlightArchive` count when no `CommentStorageArchive` records exist
+- Falls back to text heuristics only when IWA parsing fails entirely
+
+#### Key Finding: Field 4 Excludes Revisions
+
+In real-world samples, `CommentStorageArchive` records with field 4 present represent comment revisions/edits, not original comments. Counting only records **without field 4** produces the correct visible comment count:
+
+| Sample | CommentStorageArchive total | Without field 4 | Expected |
+|--------|---------------------------|-----------------|----------|
+| Pages 2013 (39 comments) | 53 | 39 | 39 |
+| Modern (79 comments) | 193 | 117 | 79* |
+| Modern (4 comments) | 4 | 4 | 4 |
+| Pages 2013 (0 comments) | 0 | 0 | 0 |
+
+\* For modern format, the detector uses `HighlightArchive` count (77) plus bundle-wide comment file counting, which produces the correct 79.
+
 #### Practical Finding From Fixtures
 
-The modern Pages fixtures in `testdata/pages/` show that comment-bearing documents can be detected from printable payload text inside decompressed `Document.iwa`, but this signal should be treated as a narrow heuristic:
+The modern Pages fixtures in `testdata/pages/` show that comment-bearing documents can be detected from parsed records inside `Document.iwa`:
 
-- `comments.no-tracking.pages` contains a comment-only payload string and no tracked insertions/deletions
-- `comments.track.pages` contains both tracked changes and a comment payload string
-- `normal.pages` does not contain the same comment payload pattern
-
-That means the safest current rule is:
-
-```text
-detect tracked insertions/deletions
-detect comment signals separately
-report both when present
-```
-
-This preserves comment visibility in the output while still requiring a narrow matcher so generic metadata strings containing the word `comment` do not become false positives.
+- `comments.no-tracking.pages` contains a parsed comment record and no tracked insertions/deletions
+- `comments.track.pages` contains both tracked changes and a parsed comment record
+- `normal.pages` does not contain any comment-related records
 
 ### 4.6.1 Legacy Pages '09 Comments
 
@@ -436,11 +455,31 @@ message AnnotationAuthorStorageArchive {
 }
 ```
 
-### 4.8 Heuristic Detection (Fallback)
+### 4.8 Structured Detection (Primary) vs Heuristic (Fallback)
 
-When detailed protobuf message extraction fails or is unavailable, the detector uses **byte-pattern scanning** as a fallback method for tracked-change presence.
+The detector uses a layered approach: **structured IWA parsing** first, **byte-pattern scanning** as fallback when parsing fails.
 
-#### Why Heuristic Detection?
+#### Structured Detection (Primary)
+
+When `iwa.ParseIWAFile()` succeeds, the detector traverses the real IWA object stream (repeated `varint length → ArchiveInfo → MessageInfo → payload` objects) and counts typed records:
+
+**Tracked Changes:**
+- Records with type 2060 (observed `ChangeArchive` variant in real-world samples) are counted by their `kind` field:
+  - `kind == 1` → insertion
+  - `kind == 2` → deletion
+- This eliminates false positives from unrelated protobuf structures that happen to match byte patterns.
+
+**Comments:**
+- `TSD.CommentStorageArchive` (type 3056) records — counted for modern and Pages 2013
+- `TSWP.HighlightArchive` (type 2013) records — counted as comment anchors
+- Pages 2013: only `CommentStorageArchive` records without field 4 are counted (excludes revisions)
+
+**Settings:**
+- `TP.DocumentArchive` (type 1002) — field 40 for `change_tracking_enabled`
+- `TP.SettingsArchive` (type 1003) — markup visibility settings
+- `TP.UIStateArchive` in ViewState*.iwa — field 28 for paused state
+
+#### Why Heuristic Detection Still Exists
 
 1. **Protobuf Parsing May Fail**: Complex IWA format or corruption can prevent successful protobuf decoding
 2. **Graceful Degradation**: Without heuristic, malformed files would produce no results instead of best-effort detection
@@ -479,51 +518,52 @@ The detector reports confidence based on detection method:
 
 #### Limitations of Heuristic Detection
 
-- **False Positives**: Documents with many character styles may exceed thresholds
+- **False Positives**: Documents with many character styles may exceed thresholds — this is why structured parsing is preferred
 - **No Author Info**: Byte patterns don't reveal who made changes
 - **No Timestamps**: Cannot determine when changes were made
 - **Mode Detection Depends on Known Fields**: If field locations change in future Pages versions, high-confidence status may regress to heuristic mode
-- **Comment Heuristics Should Stay Narrow**: generic metadata strings containing `comment` are too broad; comment matching should remain stricter than a plain substring search
+- **Comment Heuristics Can Miscount**: Text-based comment heuristics produce both false negatives (missing comments in Pages 2013 stylesheets) and false positives (matching `comment` in unrelated metadata). Structured parsing eliminates both issues.
 
 ---
 
 ## 5. Detection Decision Tree
 
-**Note:** The current implementation uses direct settings-field extraction as the primary signal and heuristic counting as the fallback for change presence.
+**Note:** The current implementation uses structured IWA parsing as the primary signal and heuristic counting as the fallback for change presence.
 
 ```
 Open .pages file
-  └── Extract Index.zip
-        └── Decode Document.iwa (Snappy → Protobuf)
-              │
-              ├── Decompress Document.iwa
-              │     ├── Read field 40 directly
-              │     │     └── change_tracking_enabled = true? → ENABLED
-              │     ├── Decompress ViewState*.iwa (contains UIStateArchive)
-              │     │     └── Read UIStateArchive field 28
-              │     │           └── paused = true? → PAUSED
-              │     └── If fields unavailable → Use Heuristic Detection (Low Confidence)
-              │           └── Scan for byte patterns
-              │                 ├── 0x08 0x01 0x12 → Insertions (count)
-              │                 └── 0x08 0x02 0x12 → Deletions (count)
-              │
-              ├── Find TSWP.TextStorageArchive
-              │     ├── table_insertion non-empty?
-              │     │     └── YES → Insertion redlines exist
-              │     ├── table_deletion non-empty?
-              │     │     └── YES → Deletion redlines exist
-              │     └── Entries reference TSWP.ChangeArchive
-              │           ├── kind=1 → Insertion (underlined)
-              │           ├── kind=2 → Deletion (strikethrough)
-              │           └── session → Author + date via ChangeSessionArchive
-              │
-               ├── Inspect comment signals separately
-               │     ├── Modern: printable comment payloads in Document.iwa
-               │     └── Legacy: <sf:annotation> elements in index.xml
-              │
-              └── Find AnnotationAuthorStorage.iwa
-                    └── TSK.AnnotationAuthorStorageArchive
-                          └── List of all authors with names + colors
+  │
+  ├── Detect format
+  │     ├── Index/Document.iwa → Modern IWA (Format 3)
+  │     ├── Index.zip → Pages 2013 (Format 2)
+  │     └── index.xml / index.xml.gz → Legacy XML (Format 1)
+  │
+  └── Extract Document.iwa (Snappy → IWA object stream)
+        │
+        ├── Parse IWA object stream (varint len → ArchiveInfo → payloads)
+        │     │
+        │     ├── Count typed ChangeArchive records (type ~2060)
+        │     │     ├── kind == 1 → insertion
+        │     │     └── kind == 2 → deletion
+        │     │
+        │     ├── Read field 40 → change_tracking_enabled
+        │     │     └── true? → ENABLED
+        │     │
+        │     ├── Read ViewState*.iwa field 28 → paused
+        │     │     └── true? → PAUSED
+        │     │
+        │     ├── Count comment records
+        │     │     ├── Modern: HighlightArchive + CommentStorageArchive from bundle
+        │     │     ├── Pages 2013: CommentStorageArchive (without field 4) from Index.zip
+        │     │     └── Legacy: sf:annotation elements in index.xml
+        │     │
+        │     └── Parse TP.SettingsArchive for markup visibility
+        │
+        └── If IWA parsing fails → Heuristic Fallback
+              ├── Scan decompressed bytes for patterns
+              │     ├── 0x08 0x01 0x12 → Insertions (count, threshold > 21)
+              │     └── 0x08 0x02 0x12 → Deletions (count, threshold > 1)
+              └── Read field 40 from decompressed data (still available)
 ```
 
 #### Hybrid Detection Logic
@@ -547,17 +587,18 @@ Open .pages file
 |---|---|---|
 | **Track changes enabled?** | `Document.iwa` → `TP.DocumentArchive` | Field `change_tracking_enabled = true` |
 | **Tracking paused?** | `ViewState*.iwa` → `TP.UIStateArchive` | Field `28 = true` (change_tracking_paused) |
-| **Insertions exist?** | `Document.iwa` → `TSWP.TextStorageArchive.table_insertion` | Non-empty attribute table |
-| **Deletions exist?** | `Document.iwa` → `TSWP.TextStorageArchive.table_deletion` | Non-empty attribute table |
-| **Insertion count?** | `Document.iwa` → count `kChangeKindInsertion` entries | Scan ChangeArchive records |
-| **Deletion count?** | `Document.iwa` → count `kChangeKindDeletion` entries | Scan ChangeArchive records |
+| **Insertions exist?** | `Document.iwa` → typed records (type ~2060) | Count records with `kind == 1` |
+| **Deletions exist?** | `Document.iwa` → typed records (type ~2060) | Count records with `kind == 2` |
+| **Insertion count?** | `Document.iwa` → typed records (type ~2060) | Count `kind == 1` entries (structured) or byte-pattern heuristic (fallback) |
+| **Deletion count?** | `Document.iwa` → typed records (type ~2060) | Count `kind == 2` entries (structured) or byte-pattern heuristic (fallback) |
 | **Change author?** | `ChangeArchive.session` → `ChangeSessionArchive` | Author reference + date |
 | **Hidden changes?** | `Document.iwa` → `ChangeArchive.hidden = true` entries | Hidden but present |
-| **Comments exist? (modern)** | `Document.iwa` narrow payload scan | Report independently from tracked changes |
+| **Comments exist? (modern)** | `Document.iwa` → parsed records | `HighlightArchive` + `CommentStorageArchive` from bundle IWA files |
+| **Comments exist? (Pages 2013)** | `Index.zip` → parsed IWA records | `CommentStorageArchive` without field 4 |
 | **Comments exist? (legacy)** | `index.xml` → `sf:annotation` | Report independently from tracked changes |
 | **Comment authors?** | `AnnotationAuthorStorage.iwa` → `AnnotationAuthorStorageArchive` | Name + color per author |
 | **Markup visible?** | `Document.iwa` → `TP.SettingsArchive` | `show_ct_markup`, `change_bars_visible`, etc. |
-| **Heuristic detection?** | Decompressed bytes | Scan for `0x08 0x01 0x12` (insertion) and `0x08 0x02 0x12` (deletion) |
+| **Heuristic detection?** | Decompressed bytes (fallback only) | Scan for `0x08 0x01 0x12` (insertion) and `0x08 0x02 0x12` (deletion) |
 
 ---
 
@@ -923,14 +964,18 @@ if format == FormatLegacyXML && parseError != nil {
 - [x] Extract `Index.zip` from .pages bundle
 - [x] Decode Snappy compression for each .iwa file
 - [x] Parse Protobuf `ArchiveInfo` → `MessageInfo` chain
+- [x] Parse IWA object stream (varint length → ArchiveInfo → payloads) for typed record traversal
 - [x] Load type ID mappings from Common.json + Pages.json
 - [x] Check `Document.iwa` field `40` for `change_tracking_enabled`
 - [x] Check `ViewState*.iwa` (UIStateArchive) field `28` for paused state
-- [x] Scan decompressed bytes for insertion/deletion change markers (heuristic)
-- [ ] Parse `TSWP.ChangeArchive` records for author/date (struct ready, parser not fully implemented)
-- [x] Detect comment-only modern Pages redlines from observed `Document.iwa` payload patterns
+- [x] Count tracked changes from typed records (type ~2060) by kind field (structured, primary)
+- [x] Scan decompressed bytes for insertion/deletion change markers (heuristic, fallback)
+- [x] Detect Pages 2013 format (Index.zip) and extract IWA files from nested ZIP
+- [x] Count modern comments from parsed `CommentStorageArchive` and `HighlightArchive` records
+- [x] Count Pages 2013 comments from `CommentStorageArchive` records without field 4
 - [x] Detect comment-only legacy Pages '09 redlines from `sf:annotation` elements in `index.xml`
 - [x] Report comment status even when tracked insertions/deletions also exist
 - [x] Parse `AnnotationAuthorStorage.iwa` for author list
 - [x] Report markup visibility settings from `TP.SettingsArchive`
+- [ ] Parse `TSWP.ChangeArchive` records for author/date (struct ready, parser not fully implemented)
 - [ ] Handle hidden changes (`hidden=true`)
