@@ -1,6 +1,9 @@
 package iwa
 
 import (
+	"archive/zip"
+	"io"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -189,6 +192,74 @@ func TestDecompressSnappy(t *testing.T) {
 				t.Errorf("DecompressSnappy returned empty result")
 			}
 		})
+	}
+}
+
+func TestDecompressSnappy_ConcatenatedRawSegments(t *testing.T) {
+	pagesPath := filepath.Join("..", "..", "pages", "0010h000000006516712.pages")
+	r, err := zip.OpenReader(pagesPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("skipping concatenated raw snappy test: sample not found: %v", err)
+		}
+		t.Fatalf("failed to open sample pages file: %v", err)
+	}
+	defer r.Close()
+
+	var data []byte
+	for _, f := range r.File {
+		if f.Name != "Index/Document.iwa" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("failed to open Document.iwa: %v", err)
+		}
+		data, err = io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("failed to read Document.iwa: %v", err)
+		}
+		break
+	}
+	if len(data) == 0 {
+		t.Fatal("Document.iwa not found in sample pages file")
+	}
+
+	decompressed, err := DecompressSnappy(data)
+	if err != nil {
+		t.Fatalf("DecompressSnappy returned error for concatenated segments: %v", err)
+	}
+	if len(decompressed) <= 65536 {
+		t.Fatalf("decompressed length = %d, want more than first 65536-byte segment", len(decompressed))
+	}
+}
+
+func TestParseIWAFile_ParsesStreamOfArchiveInfoAndPayloads(t *testing.T) {
+	pagesPath := filepath.Join("..", "testdata", "pages", "track.not-accepted.pages")
+	data, err := ExtractDocumentIWA(pagesPath)
+	if err != nil {
+		t.Fatalf("ExtractDocumentIWA returned error: %v", err)
+	}
+
+	parsed, err := ParseIWAFile(data)
+	if err != nil {
+		t.Fatalf("ParseIWAFile returned error: %v", err)
+	}
+	if len(parsed.Records) == 0 {
+		t.Fatal("ParseIWAFile returned no records")
+	}
+	if len(parsed.ByType[10000]) == 0 {
+		t.Fatal("ParseIWAFile missing expected TP.DocumentArchive records")
+	}
+	if len(parsed.ByType[2060]) == 0 {
+		t.Fatal("ParseIWAFile missing expected visible change records for tracked sample")
+	}
+	if len(parsed.ByType[0]) != 0 {
+		t.Fatalf("ParseIWAFile produced %d type=0 records, want 0", len(parsed.ByType[0]))
+	}
+	if parsed.ArchiveInfo == nil {
+		t.Fatal("ParseIWAFile ArchiveInfo = nil")
 	}
 }
 

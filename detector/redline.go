@@ -13,6 +13,10 @@ import (
 	"github.com/xifanyan/iwork-redline-detector/iwa"
 )
 
+// Observed in shipped fixtures and real-world Pages samples: these records
+// correspond to pending visible tracked changes in modern Documents.
+const observedTypeVisibleChangeArchive uint64 = 2060
+
 type Change struct {
 	Kind    int
 	Author  string
@@ -99,10 +103,6 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 
 	docData, err := extractDocumentIWA(pagesPath)
 	if err != nil {
-		if isEncryptionError(err) {
-			result.IsEncrypted = true
-			return result, nil
-		}
 		return nil, fmt.Errorf("failed to extract Document.iwa: %w", err)
 	}
 
@@ -112,17 +112,22 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 
 	decompressed, err := iwa.DecompressSnappy(docData)
 	if err != nil {
-		if isEncryptionError(err) {
-			result.IsEncrypted = true
-			return result, nil
-		}
 		return nil, fmt.Errorf("failed to decompress Document.iwa: %w", err)
 	}
 
-	hasTrackChanges, insertions, deletions := detectTrackChangesHeuristic(decompressed)
-	result.InsertionCount = insertions
-	result.DeletionCount = deletions
-	result.TrackedChangesPresent = hasTrackChanges
+	iwaFile, err := iwa.ParseIWAFile(docData)
+	protobufParsed := err == nil
+	if protobufParsed {
+		hasTrackChanges, insertions, deletions := detectTrackChangesFromParsedRecords(iwaFile)
+		result.InsertionCount = insertions
+		result.DeletionCount = deletions
+		result.TrackedChangesPresent = hasTrackChanges
+	} else {
+		hasTrackChanges, insertions, deletions := detectTrackChangesHeuristic(decompressed)
+		result.InsertionCount = insertions
+		result.DeletionCount = deletions
+		result.TrackedChangesPresent = hasTrackChanges
+	}
 
 	if enabled, ok := detectBooleanFieldValue(decompressed, FieldChangeTrackingEnabled); ok {
 		result.SettingEnabled = enabled
@@ -160,8 +165,6 @@ func DetectRedlines(pagesPath string) (*RedlineDetection, error) {
 	result.CommentCount = detectCommentsInData(decompressed)
 	result.HasComments = result.CommentCount > 0
 
-	iwaFile, err := iwa.ParseIWAFile(docData)
-	protobufParsed := err == nil
 	if protobufParsed {
 		if settingsMsgs, ok := iwaFile.Messages[TypeSettingsArchive]; ok && len(settingsMsgs) > 0 {
 			parseMarkupSettings(settingsMsgs[0], &result.MarkupSettings)
@@ -501,6 +504,30 @@ func detectTrackChangesHeuristic(data []byte) (hasTrackChanges bool, insertions,
 	}
 
 	return hasTrackChanges, insertions, deletions
+}
+
+func detectTrackChangesFromParsedRecords(iwaFile *iwa.IWAFile) (hasTrackChanges bool, insertions, deletions int) {
+	if iwaFile == nil {
+		return false, 0, 0
+	}
+
+	for _, record := range iwaFile.ByType[observedTypeVisibleChangeArchive] {
+		if record == nil || record.Parsed == nil {
+			continue
+		}
+		kind, ok := record.Parsed.FirstVarint(FieldChangeKind)
+		if !ok {
+			continue
+		}
+		switch kind {
+		case ChangeKindInsertion:
+			insertions++
+		case ChangeKindDeletion:
+			deletions++
+		}
+	}
+
+	return insertions > 0 || deletions > 0, insertions, deletions
 }
 
 func extractAuthorsFromData(data []byte) []Author {

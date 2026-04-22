@@ -34,9 +34,9 @@ func TestDetectRedlines(t *testing.T) {
 			wantPaused:         false,
 			wantTrackedChanges: false,
 			wantConfidence:     true,
-			minInsertions:      19,
-			maxInsertions:      21,
-			wantDeletions:      1,
+			minInsertions:      0,
+			maxInsertions:      0,
+			wantDeletions:      0,
 		},
 		{
 			name:               "blank document with tracking enabled (no changes)",
@@ -47,9 +47,9 @@ func TestDetectRedlines(t *testing.T) {
 			wantPaused:         false,
 			wantTrackedChanges: false,
 			wantConfidence:     true,
-			minInsertions:      19,
-			maxInsertions:      21,
-			wantDeletions:      1,
+			minInsertions:      0,
+			maxInsertions:      0,
+			wantDeletions:      0,
 		},
 		{
 			name:               "tracking enabled but all changes accepted (no pending redlines)",
@@ -60,9 +60,9 @@ func TestDetectRedlines(t *testing.T) {
 			wantPaused:         false,
 			wantTrackedChanges: false,
 			wantConfidence:     true,
-			minInsertions:      20,
-			maxInsertions:      22,
-			wantDeletions:      1,
+			minInsertions:      0,
+			maxInsertions:      0,
+			wantDeletions:      0,
 		},
 		{
 			name:               "tracking enabled with unaccepted changes",
@@ -73,9 +73,9 @@ func TestDetectRedlines(t *testing.T) {
 			wantPaused:         false,
 			wantTrackedChanges: true,
 			wantConfidence:     true,
-			minInsertions:      21,
-			maxInsertions:      23,
-			wantDeletions:      1,
+			minInsertions:      1,
+			maxInsertions:      1,
+			wantDeletions:      0,
 		},
 		{
 			name:               "tracking paused with deletions present",
@@ -86,9 +86,9 @@ func TestDetectRedlines(t *testing.T) {
 			wantPaused:         true,
 			wantTrackedChanges: true,
 			wantConfidence:     true,
-			minInsertions:      20,
-			maxInsertions:      22,
-			wantDeletions:      2,
+			minInsertions:      0,
+			maxInsertions:      0,
+			wantDeletions:      1,
 		},
 		{
 			name:               "tracking enabled with both insertions and deletions",
@@ -99,9 +99,9 @@ func TestDetectRedlines(t *testing.T) {
 			wantPaused:         false,
 			wantTrackedChanges: true,
 			wantConfidence:     true,
-			minInsertions:      21,
-			maxInsertions:      23,
-			wantDeletions:      3,
+			minInsertions:      1,
+			maxInsertions:      1,
+			wantDeletions:      2,
 		},
 	}
 
@@ -448,6 +448,33 @@ func TestDetectRedlines_CommentsAffectRedlineDecision(t *testing.T) {
 	}
 }
 
+func TestDetectRedlines_ReportedReadableFileDoesNotCountPhantomChanges(t *testing.T) {
+	pagesPath := filepath.Join("..", "..", "pages", "0010h000000006517405.pages")
+	if _, err := os.Stat(pagesPath); err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("skipping readable real-world sample: %v", err)
+		}
+		t.Fatalf("failed to stat sample: %v", err)
+	}
+
+	result, err := DetectRedlines(pagesPath)
+	if err != nil {
+		t.Fatalf("DetectRedlines returned error: %v", err)
+	}
+	if result.InsertionCount != 0 {
+		t.Fatalf("InsertionCount = %d, want 0", result.InsertionCount)
+	}
+	if result.DeletionCount != 0 {
+		t.Fatalf("DeletionCount = %d, want 0", result.DeletionCount)
+	}
+	if result.TrackedChangesPresent {
+		t.Fatal("TrackedChangesPresent = true, want false")
+	}
+	if !result.HasComments {
+		t.Fatal("HasComments = false, want true")
+	}
+}
+
 func TestCLI_DebugOutputShowsCommentOnlyReason(t *testing.T) {
 	pagesPath := filepath.Join("..", "testdata", "pages", "comments.no-tracking.pages")
 	cmd := exec.Command("go", "run", "../main.go", "-debug", pagesPath)
@@ -736,5 +763,40 @@ func TestDetectRedlines_InvalidPages_RemainsError(t *testing.T) {
 	_, err := DetectRedlines(tmpFile)
 	if err == nil {
 		t.Fatal("expected invalid file to remain an error")
+	}
+}
+
+func TestDetectRedlines_ModernCorruptDocumentRemainsError(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "corrupt-modern.pages")
+	file, err := os.Create(tmp)
+	if err != nil {
+		t.Fatalf("failed to create temp archive: %v", err)
+	}
+
+	zw := zip.NewWriter(file)
+	entries := map[string][]byte{
+		"Index/Document.iwa":        []byte{0x00, 0x4F, 0x8B, 0x00, 0x80, 0x80, 0x04},
+		"Index/ViewState-1.iwa":     []byte{0x00, 0x01, 0x00, 0x00, 0x00},
+		"Index/AnnotationAuthorStorage.iwa": []byte{0x00, 0x01, 0x00, 0x00, 0x00},
+	}
+	for name, data := range entries {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("failed to create zip entry %s: %v", name, err)
+		}
+		if _, err := w.Write(data); err != nil {
+			t.Fatalf("failed to write zip entry %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("failed to close zip writer: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("failed to close archive file: %v", err)
+	}
+
+	_, err = DetectRedlines(tmp)
+	if err == nil {
+		t.Fatal("expected corrupt modern Document.iwa to remain an error")
 	}
 }

@@ -16,9 +16,8 @@ type ArchiveInfo struct {
 }
 
 type MessageInfo struct {
-	Length      uint64
 	Type        uint64
-	ArchiveData []byte
+	Length      uint64
 }
 
 type IWAFile struct {
@@ -65,6 +64,9 @@ func DecompressSnappy(data []byte) ([]byte, error) {
 	firstUint32 := binary.LittleEndian.Uint32(first4Bytes)
 
 	if firstUint32 == 0 || firstUint32 > uint32(len(rest))*2 {
+		if decoded, err := decodeFramedRawSnappySegments(data); err == nil {
+			return decoded, nil
+		}
 		return snappy.Decode(nil, rest)
 	}
 
@@ -97,10 +99,57 @@ func DecompressSnappy(data []byte) ([]byte, error) {
 	}
 
 	if len(result) == 0 {
+		if decoded, err := decodeFramedRawSnappySegments(data); err == nil {
+			return decoded, nil
+		}
 		return snappy.Decode(nil, rest)
 	}
 
 	return result, nil
+}
+
+func decodeFramedRawSnappySegments(data []byte) ([]byte, error) {
+	remaining := data
+	decoded := make([]byte, 0)
+
+	for len(remaining) > 0 {
+		block, consumed, err := decodeSingleFramedRawSnappySegment(remaining)
+		if err != nil {
+			return nil, err
+		}
+		decoded = append(decoded, block...)
+		remaining = remaining[consumed:]
+	}
+
+	if len(decoded) == 0 {
+		return nil, fmt.Errorf("empty snappy payload")
+	}
+
+	return decoded, nil
+}
+
+func decodeSingleFramedRawSnappySegment(data []byte) ([]byte, int, error) {
+	if len(data) < 4 {
+		return nil, 0, fmt.Errorf("framed snappy segment too short")
+	}
+
+	header := binary.LittleEndian.Uint32(data[:4])
+	if header == 0 || header&0xff != 0 {
+		return nil, 0, fmt.Errorf("invalid framed raw snappy segment header")
+	}
+
+	payloadLen := int(header >> 8)
+	if payloadLen <= 0 || payloadLen > len(data)-4 {
+		return nil, 0, fmt.Errorf("invalid framed raw snappy segment length")
+	}
+
+	payload := data[4 : 4+payloadLen]
+	decoded, err := snappy.Decode(nil, payload)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return decoded, 4 + payloadLen, nil
 }
 
 func ReadArchiveInfo(data []byte) (*ArchiveInfo, error) {
@@ -131,13 +180,19 @@ func ReadArchiveInfo(data []byte) (*ArchiveInfo, error) {
 			if err != nil {
 				return nil, err
 			}
+			if dataLen > uint64(r.Len()) {
+				return nil, fmt.Errorf("archive info message length %d exceeds remaining %d", dataLen, r.Len())
+			}
 			msgData := make([]byte, dataLen)
-			r.Read(msgData)
+			if _, err := io.ReadFull(r, msgData); err != nil {
+				return nil, err
+			}
 
 			mi, err := ParseMessageInfo(msgData)
-			if err == nil {
-				info.MessageInfos = append(info.MessageInfos, mi)
+			if err != nil {
+				return nil, err
 			}
+			info.MessageInfos = append(info.MessageInfos, mi)
 
 		case wireType == 3:
 			if err := skipGroup(r, fieldNum); err != nil {
@@ -172,22 +227,38 @@ func ParseMessageInfo(data []byte) (MessageInfo, error) {
 			if err != nil {
 				return info, err
 			}
-			info.Length = val
-
-		case fieldNum == 2 && wireType == 0:
-			val, err := ReadVarint(r)
-			if err != nil {
-				return info, err
-			}
 			info.Type = val
 
-		case fieldNum == 3 && wireType == 2:
+		case fieldNum == 2 && wireType == 0:
+			if _, err := ReadVarint(r); err != nil {
+				return info, err
+			}
+
+		case fieldNum == 2 && wireType == 2:
 			dataLen, err := ReadVarint(r)
 			if err != nil {
 				return info, err
 			}
-			info.ArchiveData = make([]byte, dataLen)
-			r.Read(info.ArchiveData)
+			if dataLen > uint64(r.Len()) {
+				return info, fmt.Errorf("packed version length %d exceeds remaining %d", dataLen, r.Len())
+			}
+			packed := make([]byte, dataLen)
+			if _, err := io.ReadFull(r, packed); err != nil {
+				return info, err
+			}
+			packedReader := bytes.NewReader(packed)
+			for packedReader.Len() > 0 {
+				if _, err := ReadVarint(packedReader); err != nil {
+					return info, err
+				}
+			}
+
+		case fieldNum == 3 && wireType == 0:
+			val, err := ReadVarint(r)
+			if err != nil {
+				return info, err
+			}
+			info.Length = val
 
 		case wireType == 3:
 			if err := skipGroup(r, fieldNum); err != nil {
@@ -507,31 +578,62 @@ func ParseIWAFile(data []byte) (*IWAFile, error) {
 		return nil, fmt.Errorf("decompress error: %w", err)
 	}
 
-	info, err := ReadArchiveInfo(decompressed)
-	if err != nil {
-		return nil, fmt.Errorf("parse ArchiveInfo error: %w", err)
-	}
-
 	iwa := &IWAFile{
-		ArchiveInfo: info,
 		ByType:      make(map[uint64][]*MessageRecord),
 		Messages:    make(map[uint64][][]byte),
 	}
 
-	for _, mi := range info.MessageInfos {
-		if len(mi.ArchiveData) > 0 {
+	r := bytes.NewReader(decompressed)
+	for r.Len() > 0 {
+		archiveInfoLen, err := ReadVarint(r)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("read archive info length: %w", err)
+		}
+		if archiveInfoLen == 0 {
+			return nil, fmt.Errorf("invalid zero-length archive info")
+		}
+		if archiveInfoLen > uint64(r.Len()) {
+			return nil, fmt.Errorf("archive info length %d exceeds remaining %d", archiveInfoLen, r.Len())
+		}
+
+		archiveInfoData := make([]byte, archiveInfoLen)
+		if _, err := io.ReadFull(r, archiveInfoData); err != nil {
+			return nil, fmt.Errorf("read archive info payload: %w", err)
+		}
+
+		info, err := ReadArchiveInfo(archiveInfoData)
+		if err != nil {
+			return nil, fmt.Errorf("parse ArchiveInfo error: %w", err)
+		}
+		if iwa.ArchiveInfo == nil {
+			iwa.ArchiveInfo = info
+		}
+
+		for _, mi := range info.MessageInfos {
+			if mi.Length > uint64(r.Len()) {
+				return nil, fmt.Errorf("payload length %d exceeds remaining %d for type %d", mi.Length, r.Len(), mi.Type)
+			}
+
+			payload := make([]byte, mi.Length)
+			if _, err := io.ReadFull(r, payload); err != nil {
+				return nil, fmt.Errorf("read payload for type %d: %w", mi.Type, err)
+			}
+
 			record := &MessageRecord{
 				ArchiveID: info.Identifier,
 				TypeID:    mi.Type,
 				Length:    mi.Length,
-				Raw:       mi.ArchiveData,
+				Raw:       payload,
 			}
-			if parsed, err := ParseMessage(mi.ArchiveData); err == nil {
+			if parsed, err := ParseMessage(payload); err == nil {
 				record.Parsed = parsed
 			}
 			iwa.Records = append(iwa.Records, record)
 			iwa.ByType[mi.Type] = append(iwa.ByType[mi.Type], record)
-			iwa.Messages[mi.Type] = append(iwa.Messages[mi.Type], mi.ArchiveData)
+			iwa.Messages[mi.Type] = append(iwa.Messages[mi.Type], payload)
 		}
 	}
 
