@@ -1,6 +1,5 @@
 # iWork File Format — Track Changes / Redline Detection
 **Research Date:** 2026-03-20
-**Author:** Claude (Macro Trading Assistant)
 **Purpose:** Detect track changes & redlines in Apple iWork documents for legal document review workflows
 
 > **Note:** This document is a technical research reference. For usage and implementation details, see [README.md](./README.md).
